@@ -177,8 +177,10 @@ pub fn parse_ini(kind: DocKind, text: &str, answers: &mut Answers) {
 /// A getter that produces an env var's value from the answers (or None to omit).
 type EnvGetter = fn(&Answers, BasicAuthEncoding) -> Option<String>;
 
-fn env_pairs() -> [(&'static str, EnvGetter); 6] {
+fn env_pairs() -> [(&'static str, EnvGetter); 7] {
     [
+        // Always drop privileges to `nobody` in the containers.
+        ("ARKIME__dropUser", |_, _| Some("nobody".to_string())),
         ("ARKIME__interface", |a, _| {
             (!a.interfaces.is_empty()).then(|| a.interfaces.clone())
         }),
@@ -570,6 +572,12 @@ mod tests {
         assert_eq!(a.es_user, "u");
         assert_eq!(a.es_password, "p");
         assert_eq!(a.plugins, "entropy.so");
+    }
+
+    #[test]
+    fn env_always_drops_to_nobody() {
+        let out = render_env("", &Answers::default(), BasicAuthEncoding::Plaintext);
+        assert!(out.contains("ARKIME__dropUser=nobody"));
     }
 
     #[test]
