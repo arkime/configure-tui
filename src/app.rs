@@ -598,8 +598,6 @@ impl App {
 
     fn key_geoip(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => self.answers.download_geoip = true,
-            KeyCode::Char('n') | KeyCode::Char('N') => self.answers.download_geoip = false,
             KeyCode::Char(' ') => self.answers.download_geoip = !self.answers.download_geoip,
             KeyCode::Enter => self.advance(),
             _ => {}
@@ -608,8 +606,6 @@ impl App {
 
     fn key_viewer_uploads(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => self.answers.enable_uploads = true,
-            KeyCode::Char('n') | KeyCode::Char('N') => self.answers.enable_uploads = false,
             KeyCode::Char(' ') => self.answers.enable_uploads = !self.answers.enable_uploads,
             KeyCode::Enter => self.advance(),
             _ => {}
@@ -1054,8 +1050,8 @@ mod tests {
         assert_eq!(a.answers.s2s_password, "s3cret");
         assert_eq!(a.step, WizardStep::ViewerUploads);
 
-        // Viewer uploads: enable, then proceed.
-        press(&mut a, KeyCode::Char('y'));
+        // Viewer uploads: enable (space), then proceed.
+        press(&mut a, KeyCode::Char(' '));
         press(&mut a, KeyCode::Enter);
         assert!(a.answers.enable_uploads);
         assert_eq!(a.step, WizardStep::Plugins);

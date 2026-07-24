@@ -395,58 +395,40 @@ fn render_docker_mounts(app: &App, f: &mut Frame, area: Rect) {
     f.render_widget(Paragraph::new(lines), area);
 }
 
+/// A single always-focused checkbox line for the boolean-toggle screens.
+fn checkbox_line(label: &str, checked: bool) -> Line<'static> {
+    let mark = if checked { "[x]" } else { "[ ]" };
+    Line::from(Span::styled(
+        format!("▶ {mark} {label}"),
+        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+    ))
+}
+
 fn render_viewer_uploads(app: &App, f: &mut Frame, area: Rect) {
-    let choice = if app.answers.enable_uploads {
-        "yes"
-    } else {
-        "no"
-    };
     let lines = vec![
-        Line::from("Allow PCAP uploads through the viewer UI?"),
+        Line::from("Viewer uploads (space to toggle)."),
+        Line::from(""),
+        checkbox_line(
+            "Allow PCAP uploads through the viewer UI",
+            app.answers.enable_uploads,
+        ),
         Line::from(Span::styled(
             "Sets uploadCommand so operators can upload capture files.",
             Style::default().fg(Color::DarkGray),
         )),
-        Line::from(""),
-        Line::from(vec![
-            Span::raw("Choice: "),
-            Span::styled(
-                choice,
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "   (y/n or space to toggle)",
-                Style::default().fg(Color::DarkGray),
-            ),
-        ]),
     ];
     f.render_widget(Paragraph::new(lines), area);
 }
 
 fn render_geoip(app: &App, f: &mut Frame, area: Rect) {
-    let choice = if app.answers.download_geoip {
-        "yes"
-    } else {
-        "no"
-    };
     let lines = vec![
-        Line::from("Download GeoIP files? (needs a MaxMind account)"),
+        Line::from("GeoIP (space to toggle)."),
+        Line::from(""),
+        checkbox_line("Download GeoIP files", app.answers.download_geoip),
         Line::from(Span::styled(
-            "https://arkime.com/faq#maxmind",
+            "Needs a MaxMind account — https://arkime.com/faq#maxmind",
             Style::default().fg(Color::DarkGray),
         )),
-        Line::from(""),
-        Line::from(vec![
-            Span::raw("Choice: "),
-            Span::styled(
-                choice,
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "   (y/n or space to toggle)",
-                Style::default().fg(Color::DarkGray),
-            ),
-        ]),
     ];
     f.render_widget(Paragraph::new(lines), area);
 }
@@ -619,8 +601,8 @@ fn render_footer(app: &App, f: &mut Frame, area: Rect) {
             "↑↓ row · type host path · space toggle · Enter next · Esc back"
         }
         WizardStep::Elasticsearch => "Tab/↑↓ field · type · space (demo) · Enter next · Esc back",
-        WizardStep::ViewerUploads => "y/n · →/Enter next · ←/Esc back",
-        WizardStep::GeoIp => "y/n · →/Enter next · ←/Esc back",
+        WizardStep::ViewerUploads => "space toggle · →/Enter next · ←/Esc back",
+        WizardStep::GeoIp => "space toggle · →/Enter next · ←/Esc back",
         WizardStep::Review => "→/Enter apply · ←/Esc back",
         WizardStep::Progress => {
             if app.applied {
