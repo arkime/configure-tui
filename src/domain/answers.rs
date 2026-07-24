@@ -38,7 +38,7 @@ impl Answers {
     pub const DEFAULT_WISE_URL: &'static str = "http://127.0.0.1:8081";
 
     /// Default host data dir for the docker single-node Elasticsearch.
-    pub const DEFAULT_ES_DATA_DIR: &'static str = "/esdata";
+    pub const DEFAULT_ES_DATA_DIR: &'static str = "/arkime/esdata";
 
     /// URL the arkime containers use to reach the single-node ES (host net,
     /// security disabled).
