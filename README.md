@@ -15,9 +15,23 @@ dependencies, so it can be produced once and pulled into the rpm/deb packages.
 1. **Deployment** — Native vs Docker (everything branches on this).
 2. **Components** — multi-select toggles; later prompts are the union of what the
    selected components need.
-3. **Interfaces** (capture only), **OpenSearch/Elasticsearch** (URL/user/password
-   + optional local demo), **Encryption password**, **GeoIP** (native + capture).
+3. **Interfaces** (capture only; checkbox list of detected NICs + advanced
+   free-type), **OpenSearch/Elasticsearch** (URL/user/password + optional local
+   demo), **Encryption password**, **Plugins** (capture only; checkbox list,
+   auto-enables `wise.so` when the wise component is on), **GeoIP** (native +
+   capture), **Docker mounts** (docker only; suggested host bind mounts,
+   toggleable).
 4. **Review** → **Apply** → live progress log.
+
+Docker mode suggests these host mounts (all on by default, individually
+toggleable), attached to the capture/viewer services:
+
+```
+/arkime/etc:/opt/arkime/etc
+/arkime/pcap:/opt/arkime/raw
+/arkime/maxmind:/var/lib/GeoIP
+./GeoIP.conf:/etc/GeoIP.conf
+```
 
 ## Develop
 

@@ -4,7 +4,9 @@ use crate::actions::docker::{self, Images};
 use crate::actions::native;
 use crate::actions::system::RealOps;
 use crate::config::substitute::BasicAuthEncoding;
-use crate::domain::{Answers, BuildConfig, Component, Components, Deployment, Platform};
+use crate::domain::{
+    plugins, Answers, BuildConfig, Component, Components, Deployment, MountSelection, Platform,
+};
 use crate::interfaces;
 use crate::log::LogLine;
 use crate::steps::{self, WizardStep};
@@ -25,6 +27,7 @@ pub struct Fields {
     pub es_user: Input,
     pub es_password: Input,
     pub s2s: Input,
+    pub plugins: Input,
 }
 
 pub struct App {
@@ -50,6 +53,14 @@ pub struct App {
     /// When true, the Interfaces screen shows a free-text field instead of the
     /// checkbox list (advanced mode).
     pub interface_advanced: bool,
+
+    /// Per-plugin checkbox state, parallel to `plugins::KNOWN_PLUGINS`.
+    pub plugin_checked: Vec<bool>,
+    /// When true, the Plugins screen shows a free-text field.
+    pub plugin_advanced: bool,
+
+    /// Suggested docker bind-mount toggles.
+    pub docker_mounts: MountSelection,
 
     pub log: Vec<LogLine>,
     pub applied: bool,
@@ -95,6 +106,9 @@ impl App {
             es_focus: 0,
             interface_checked,
             interface_advanced,
+            plugin_checked: vec![false; plugins::KNOWN_PLUGINS.len()],
+            plugin_advanced: false,
+            docker_mounts: MountSelection::default(),
             log: Vec::new(),
             applied: false,
             error: None,
@@ -125,6 +139,19 @@ impl App {
             WizardStep::ComponentsSelect => self.cursor = 0,
             WizardStep::Interfaces => self.cursor = 0,
             WizardStep::Elasticsearch => self.es_focus = 0,
+            WizardStep::Plugins => {
+                self.cursor = 0;
+                // The wise component forces the wise plugin on.
+                if self.components.wise {
+                    if let Some(i) = plugins::KNOWN_PLUGINS
+                        .iter()
+                        .position(|&p| p == plugins::WISE_PLUGIN)
+                    {
+                        self.plugin_checked[i] = true;
+                    }
+                }
+            }
+            WizardStep::DockerMounts => self.cursor = 0,
             _ => {}
         }
     }
@@ -145,6 +172,8 @@ impl App {
             WizardStep::Interfaces => self.key_interfaces(key),
             WizardStep::Elasticsearch => self.key_elasticsearch(key),
             WizardStep::S2sPassword => self.key_s2s(key),
+            WizardStep::Plugins => self.key_plugins(key),
+            WizardStep::DockerMounts => self.key_docker_mounts(key),
             WizardStep::GeoIp => self.key_geoip(key),
             WizardStep::Review => self.key_review(key),
             WizardStep::Progress => self.key_progress(key),
@@ -269,6 +298,77 @@ impl App {
         }
     }
 
+    /// Plugins screen: checkbox list of known plugins, or advanced free-text.
+    /// The wise plugin is locked on whenever the wise component is enabled.
+    fn key_plugins(&mut self, key: KeyEvent) {
+        if self.plugin_advanced {
+            match key.code {
+                KeyCode::Enter => self.commit_plugins(),
+                KeyCode::Tab => self.plugin_advanced = false,
+                _ => {
+                    self.fields.plugins.handle_event(&Event::Key(key));
+                }
+            }
+            return;
+        }
+
+        let n = plugins::KNOWN_PLUGINS.len();
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => self.cursor = (self.cursor + n - 1) % n,
+            KeyCode::Down | KeyCode::Char('j') => self.cursor = (self.cursor + 1) % n,
+            KeyCode::Char(' ') => {
+                let is_wise = plugins::KNOWN_PLUGINS[self.cursor] == plugins::WISE_PLUGIN;
+                if is_wise && self.components.wise {
+                    self.error = Some("wise.so is required by the wise component.".into());
+                } else {
+                    self.plugin_checked[self.cursor] = !self.plugin_checked[self.cursor];
+                }
+            }
+            KeyCode::Char('a') | KeyCode::Tab => {
+                self.fields.plugins = Input::new(self.checked_plugins().join(";"));
+                self.plugin_advanced = true;
+            }
+            KeyCode::Enter => self.commit_plugins(),
+            KeyCode::Left | KeyCode::Backspace => self.retreat(),
+            _ => {}
+        }
+    }
+
+    fn checked_plugins(&self) -> Vec<String> {
+        plugins::KNOWN_PLUGINS
+            .iter()
+            .zip(&self.plugin_checked)
+            .filter(|(_, &checked)| checked)
+            .map(|(name, _)| name.to_string())
+            .collect()
+    }
+
+    fn commit_plugins(&mut self) {
+        let raw = if self.plugin_advanced {
+            self.fields.plugins.value().to_string()
+        } else {
+            self.checked_plugins().join(";")
+        };
+        // finalize() forces wise.so on when the wise component is enabled.
+        self.answers.plugins = plugins::finalize(&raw, self.components.wise);
+        self.advance();
+    }
+
+    /// Docker mounts screen: toggle the suggested host bind mounts relevant to
+    /// the selected components.
+    fn key_docker_mounts(&mut self, key: KeyEvent) {
+        let relevant = MountSelection::relevant_kinds(&self.components);
+        let n = relevant.len();
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') if n > 0 => self.cursor = (self.cursor + n - 1) % n,
+            KeyCode::Down | KeyCode::Char('j') if n > 0 => self.cursor = (self.cursor + 1) % n,
+            KeyCode::Char(' ') if n > 0 => self.docker_mounts.toggle(relevant[self.cursor]),
+            KeyCode::Enter => self.advance(),
+            KeyCode::Left | KeyCode::Backspace => self.retreat(),
+            _ => {}
+        }
+    }
+
     fn key_elasticsearch(&mut self, key: KeyEvent) {
         // Fields: 0 url, 1 user, 2 password, 3 demo-es toggle.
         match key.code {
@@ -347,6 +447,7 @@ impl App {
                 let generated = docker::generate(
                     &self.components,
                     &self.answers,
+                    &self.docker_mounts,
                     &Images::default(),
                     self.basic_auth,
                 );
@@ -447,6 +548,11 @@ mod tests {
         typ(&mut a, "s3cret");
         press(&mut a, KeyCode::Enter);
         assert_eq!(a.answers.s2s_password, "s3cret");
+        assert_eq!(a.step, WizardStep::Plugins);
+
+        // Plugins: leave none selected, proceed.
+        press(&mut a, KeyCode::Enter);
+        assert_eq!(a.answers.plugins, "");
         assert_eq!(a.step, WizardStep::GeoIp);
 
         // GeoIP default is yes; proceed to Review.
@@ -524,7 +630,58 @@ mod tests {
         press(&mut a, KeyCode::Char(' '));
         press(&mut a, KeyCode::Enter);
         assert!(a.components.wise);
-        // Wise needs neither interfaces, ES, nor S2S -> straight to Review.
+        // Wise needs no interfaces/ES/S2S/plugins, but docker still offers mounts.
+        assert_eq!(a.step, WizardStep::DockerMounts);
+        press(&mut a, KeyCode::Enter);
         assert_eq!(a.step, WizardStep::Review);
+    }
+
+    #[test]
+    fn wise_component_forces_wise_plugin() {
+        let mut a = app();
+        a.components = Components {
+            capture: true,
+            wise: true,
+            ..Default::default()
+        };
+        a.step = WizardStep::Plugins;
+        a.on_enter_step();
+        // wise.so pre-checked and locked; committing keeps it.
+        a.commit_plugins();
+        assert_eq!(a.answers.plugins, "wise.so");
+    }
+
+    #[test]
+    fn plugin_checkboxes_join_selection() {
+        let mut a = app();
+        a.components = Components {
+            capture: true,
+            ..Default::default()
+        };
+        a.step = WizardStep::Plugins;
+        a.on_enter_step();
+        // Toggle ja4plus (index 1) and entropy (index 2).
+        a.cursor = 1;
+        press(&mut a, KeyCode::Char(' '));
+        a.cursor = 2;
+        press(&mut a, KeyCode::Char(' '));
+        press(&mut a, KeyCode::Enter);
+        assert_eq!(a.answers.plugins, "ja4plus.amd64.so;entropy.so");
+    }
+
+    #[test]
+    fn docker_mounts_toggle_persists() {
+        let mut a = app();
+        a.deployment = Some(Deployment::Docker);
+        a.components = Components {
+            capture: true,
+            ..Default::default()
+        };
+        a.step = WizardStep::DockerMounts;
+        a.on_enter_step();
+        // Toggle the first relevant mount (etc) off.
+        press(&mut a, KeyCode::Char(' '));
+        let etc = crate::domain::MountKind::Etc;
+        assert!(!a.docker_mounts.is_enabled(etc));
     }
 }

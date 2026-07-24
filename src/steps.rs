@@ -19,8 +19,12 @@ pub enum WizardStep {
     Elasticsearch,
     /// S2S / encryption secret.
     S2sPassword,
+    /// Capture plugin selection (capture only).
+    Plugins,
     /// GeoIP download prompt (native + capture only).
     GeoIp,
+    /// Suggested host bind mounts (docker only).
+    DockerMounts,
     /// Summary + confirm.
     Review,
     /// Applying actions, live log.
@@ -46,9 +50,17 @@ pub fn required_steps(deployment: Option<Deployment>, components: &Components) -
     if components.needs_s2s_password() {
         steps.push(WizardStep::S2sPassword);
     }
+    // Plugins are loaded by capture, in both deployments.
+    if components.capture {
+        steps.push(WizardStep::Plugins);
+    }
     // GeoIP is a native-only action, and only relevant when capturing.
     if deployment == Some(Deployment::Native) && components.capture {
         steps.push(WizardStep::GeoIp);
+    }
+    // Suggested bind mounts only apply to the docker deployment.
+    if deployment == Some(Deployment::Docker) && components.any() {
+        steps.push(WizardStep::DockerMounts);
     }
 
     steps.push(WizardStep::Review);
@@ -110,6 +122,7 @@ mod tests {
                 WizardStep::Interfaces,
                 WizardStep::Elasticsearch,
                 WizardStep::S2sPassword,
+                WizardStep::Plugins,
                 WizardStep::GeoIp,
                 WizardStep::Review,
                 WizardStep::Progress,
@@ -123,6 +136,8 @@ mod tests {
         let steps = required_steps(Some(Deployment::Docker), &caps());
         assert!(!steps.contains(&WizardStep::GeoIp));
         assert!(steps.contains(&WizardStep::Interfaces));
+        assert!(steps.contains(&WizardStep::DockerMounts));
+        assert!(steps.contains(&WizardStep::Plugins));
     }
 
     #[test]

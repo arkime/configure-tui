@@ -159,6 +159,10 @@ fn write_ini(
             basic_auth,
         );
     }
+    // Capture plugins live in config.ini's [default] section.
+    if kind == SampleKind::Config && !answers.plugins.is_empty() {
+        rendered = crate::config::substitute::set_ini_key(&rendered, "plugins", &answers.plugins);
+    }
 
     let out = etc.join(format!("{}.ini", kind.base()));
     match ops.write_new(&out, &rendered) {

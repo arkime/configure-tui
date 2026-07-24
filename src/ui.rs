@@ -2,7 +2,7 @@
 //! small render helper. No state is mutated here.
 
 use crate::app::App;
-use crate::domain::{Component, Deployment};
+use crate::domain::{plugins, Component, Deployment, MountSelection};
 use crate::log::Level;
 use crate::steps::WizardStep;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -61,6 +61,8 @@ fn step_title(step: WizardStep) -> &'static str {
         WizardStep::Interfaces => "Interfaces",
         WizardStep::Elasticsearch => "OpenSearch / Elasticsearch",
         WizardStep::S2sPassword => "Encryption password",
+        WizardStep::Plugins => "Capture plugins",
+        WizardStep::DockerMounts => "Docker mounts",
         WizardStep::GeoIp => "GeoIP",
         WizardStep::Review => "Review",
         WizardStep::Progress => "Applying",
@@ -78,6 +80,8 @@ fn render_body(app: &App, f: &mut Frame, area: Rect) {
         WizardStep::Interfaces => render_interfaces(app, f, inner),
         WizardStep::Elasticsearch => render_elasticsearch(app, f, inner),
         WizardStep::S2sPassword => render_s2s(app, f, inner),
+        WizardStep::Plugins => render_plugins(app, f, inner),
+        WizardStep::DockerMounts => render_docker_mounts(app, f, inner),
         WizardStep::GeoIp => render_geoip(app, f, inner),
         WizardStep::Review => render_review(app, f, inner),
         WizardStep::Progress => render_progress(app, f, inner),
@@ -243,6 +247,78 @@ fn render_s2s(app: &App, f: &mut Frame, area: Rect) {
     f.render_widget(Paragraph::new(lines), area);
 }
 
+fn render_plugins(app: &App, f: &mut Frame, area: Rect) {
+    if app.plugin_advanced {
+        let lines = vec![
+            Line::from("Capture plugins to load, ';'-separated."),
+            Line::from(Span::styled(
+                "Advanced mode — Tab returns to the checkbox list.",
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(""),
+            field_line("plugins", app.fields.plugins.value(), true),
+        ];
+        f.render_widget(Paragraph::new(lines), area);
+        return;
+    }
+
+    let mut lines = vec![
+        Line::from("Select capture plugins to load (space to toggle)."),
+        Line::from(""),
+    ];
+    for (i, name) in plugins::KNOWN_PLUGINS.iter().enumerate() {
+        let checked = if app.plugin_checked[i] { "[x]" } else { "[ ]" };
+        let locked = *name == plugins::WISE_PLUGIN && app.components.wise;
+        let focused = i == app.cursor;
+        let marker = if focused { "▶ " } else { "  " };
+        let suffix = if locked { "  (required by wise)" } else { "" };
+        let style = if focused {
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        } else if locked {
+            Style::default().fg(Color::DarkGray)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(Span::styled(
+            format!("{marker}{checked} {name}{suffix}"),
+            style,
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Press 'a' to type a custom plugin list.",
+        Style::default().fg(Color::DarkGray),
+    )));
+    f.render_widget(Paragraph::new(lines), area);
+}
+
+fn render_docker_mounts(app: &App, f: &mut Frame, area: Rect) {
+    let relevant = MountSelection::relevant_kinds(&app.components);
+    let mut lines = vec![
+        Line::from("Suggested host mounts (space to toggle). Host paths on the left."),
+        Line::from(""),
+    ];
+    for (i, kind) in relevant.iter().enumerate() {
+        let checked = if app.docker_mounts.is_enabled(*kind) {
+            "[x]"
+        } else {
+            "[ ]"
+        };
+        let focused = i == app.cursor;
+        let marker = if focused { "▶ " } else { "  " };
+        let style = if focused {
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(Span::styled(
+            format!("{marker}{checked} {}", kind.spec()),
+            style,
+        )));
+    }
+    f.render_widget(Paragraph::new(lines), area);
+}
+
 fn render_geoip(app: &App, f: &mut Frame, area: Rect) {
     let choice = if app.answers.download_geoip {
         "yes"
@@ -305,6 +381,14 @@ fn render_review(app: &App, f: &mut Frame, area: Rect) {
     if app.components.needs_s2s_password() {
         lines.push(kv("Encryption pw", &mask(&app.answers.s2s_password)));
     }
+    if app.components.capture {
+        let plugins = if app.answers.plugins.is_empty() {
+            "(none)"
+        } else {
+            &app.answers.plugins
+        };
+        lines.push(kv("Plugins", plugins));
+    }
     if app.deployment == Some(Deployment::Native) && app.components.capture {
         lines.push(kv(
             "GeoIP",
@@ -314,6 +398,19 @@ fn render_review(app: &App, f: &mut Frame, area: Rect) {
                 "no"
             },
         ));
+    }
+    if app.deployment == Some(Deployment::Docker) {
+        let mounts: Vec<String> = MountSelection::relevant_kinds(&app.components)
+            .into_iter()
+            .filter(|k| app.docker_mounts.is_enabled(*k))
+            .map(|k| k.spec())
+            .collect();
+        let text = if mounts.is_empty() {
+            "(none)".to_string()
+        } else {
+            mounts.join(", ")
+        };
+        lines.push(kv("Mounts", &text));
     }
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
@@ -363,6 +460,14 @@ fn render_footer(app: &App, f: &mut Frame, area: Rect) {
             }
         }
         WizardStep::S2sPassword => "type · Enter next · ← back · Esc quit",
+        WizardStep::Plugins => {
+            if app.plugin_advanced {
+                "type · Tab checkboxes · Enter next · Esc quit"
+            } else {
+                "↑↓ move · space toggle · a custom · Enter next · ← back"
+            }
+        }
+        WizardStep::DockerMounts => "↑↓ move · space toggle · Enter next · ← back",
         WizardStep::Elasticsearch => "Tab/↑↓ field · type · space (demo) · Enter next · ← back",
         WizardStep::GeoIp => "y/n · Enter next · ← back · Esc quit",
         WizardStep::Review => "Enter apply · ← back · Esc quit",

@@ -6,7 +6,7 @@
 
 use crate::actions::system::SystemOps;
 use crate::config::substitute::{basic_auth_value, BasicAuthEncoding};
-use crate::domain::{Answers, Component, Components};
+use crate::domain::{Answers, Component, Components, MountSelection};
 use crate::log::{Level, LogLine};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -69,6 +69,7 @@ const ENV_FILE: &str = "arkime.env";
 pub fn generate(
     components: &Components,
     answers: &Answers,
+    mounts: &MountSelection,
     images: &Images,
     basic_auth: BasicAuthEncoding,
 ) -> GeneratedDocker {
@@ -85,7 +86,8 @@ pub fn generate(
     };
 
     for c in components.enabled() {
-        let (name, svc) = arkime_service(c, images, &es_depends);
+        let binds = mounts.specs_for(c, components);
+        let (name, svc) = arkime_service(c, images, &es_depends, binds);
         services.insert(name, svc);
     }
 
@@ -99,12 +101,18 @@ pub fn generate(
     }
 }
 
-fn arkime_service(c: Component, images: &Images, es_depends: &[String]) -> (String, Service) {
+fn arkime_service(
+    c: Component,
+    images: &Images,
+    es_depends: &[String],
+    binds: Vec<String>,
+) -> (String, Service) {
     let mut svc = Service {
         image: images.arkime.clone(),
         command: Some(c.label().to_string()),
         env_file: vec![ENV_FILE.into()],
         depends_on: es_depends.to_vec(),
+        volumes: binds,
         restart: Some("unless-stopped".into()),
         ..Default::default()
     };
@@ -114,10 +122,6 @@ fn arkime_service(c: Component, images: &Images, es_depends: &[String]) -> (Stri
             // Capture needs host networking + raw-socket capabilities.
             svc.network_mode = Some("host".into());
             svc.cap_add = vec!["NET_ADMIN".into(), "NET_RAW".into()];
-            svc.volumes = vec![
-                "./raw:/opt/arkime/raw".into(),
-                "./logs:/opt/arkime/logs".into(),
-            ];
         }
         Component::Viewer => svc.ports = vec!["8005:8005".into()],
         Component::Wise => svc.ports = vec!["8081:8081".into()],
@@ -171,6 +175,9 @@ fn env_file(components: &Components, answers: &Answers, basic_auth: BasicAuthEnc
             "ARKIME__passwordSecret".into(),
             answers.s2s_password.clone(),
         );
+    }
+    if !answers.plugins.is_empty() {
+        vars.insert("ARKIME__plugins".into(), answers.plugins.clone());
     }
 
     let mut out = String::new();
@@ -232,6 +239,7 @@ mod tests {
         let g = generate(
             &components,
             &answers(),
+            &MountSelection::default(),
             &Images::default(),
             BasicAuthEncoding::Plaintext,
         );
@@ -239,8 +247,52 @@ mod tests {
         assert!(g.compose_yaml.contains("network_mode: host"));
         assert!(g.compose_yaml.contains("NET_ADMIN"));
         assert!(g.compose_yaml.contains("NET_RAW"));
+        // Suggested mounts are attached by default.
+        assert!(g.compose_yaml.contains("/arkime/etc:/opt/arkime/etc"));
+        assert!(g.compose_yaml.contains("/arkime/pcap:/opt/arkime/raw"));
+        assert!(g.compose_yaml.contains("/arkime/maxmind:/var/lib/GeoIP"));
+        assert!(g.compose_yaml.contains("./GeoIP.conf:/etc/GeoIP.conf"));
         // No .ini anywhere in docker output.
         assert!(!g.compose_yaml.contains(".ini"));
+    }
+
+    #[test]
+    fn plugins_emitted_in_env_when_set() {
+        let components = Components {
+            capture: true,
+            ..Default::default()
+        };
+        let a = Answers {
+            plugins: "wise.so;entropy.so".into(),
+            ..answers()
+        };
+        let g = generate(
+            &components,
+            &a,
+            &MountSelection::default(),
+            &Images::default(),
+            BasicAuthEncoding::Plaintext,
+        );
+        assert!(g.env_file.contains("ARKIME__plugins=wise.so;entropy.so"));
+    }
+
+    #[test]
+    fn toggled_off_mount_is_absent() {
+        let components = Components {
+            capture: true,
+            ..Default::default()
+        };
+        let mut mounts = MountSelection::default();
+        mounts.toggle(crate::domain::MountKind::Pcap);
+        let g = generate(
+            &components,
+            &answers(),
+            &mounts,
+            &Images::default(),
+            BasicAuthEncoding::Plaintext,
+        );
+        assert!(!g.compose_yaml.contains("/opt/arkime/raw"));
+        assert!(g.compose_yaml.contains("/opt/arkime/etc"));
     }
 
     #[test]
@@ -253,6 +305,7 @@ mod tests {
         let g = generate(
             &components,
             &answers(),
+            &MountSelection::default(),
             &Images::default(),
             BasicAuthEncoding::Plaintext,
         );
@@ -278,6 +331,7 @@ mod tests {
         let g = generate(
             &components,
             &a,
+            &MountSelection::default(),
             &Images::default(),
             BasicAuthEncoding::Plaintext,
         );
@@ -297,6 +351,7 @@ mod tests {
         let g = generate(
             &components,
             &answers(),
+            &MountSelection::default(),
             &Images::default(),
             BasicAuthEncoding::Base64,
         );

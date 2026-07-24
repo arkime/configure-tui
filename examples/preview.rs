@@ -6,7 +6,7 @@ use arkime_setup::actions::docker::{generate, Images};
 use arkime_setup::app::App;
 use arkime_setup::config::substitute::BasicAuthEncoding;
 use arkime_setup::domain::{
-    Answers, BuildConfig, Components, Deployment, Os, Platform, ServiceManagerKind,
+    Answers, BuildConfig, Components, Deployment, MountSelection, Os, Platform, ServiceManagerKind,
 };
 use arkime_setup::steps::WizardStep;
 use arkime_setup::ui;
@@ -71,11 +71,13 @@ fn main() {
         es_password: "pass".into(),
         s2s_password: "secret".into(),
         install_demo_es: true,
+        plugins: "wise.so;ja4plus.amd64.so;entropy.so".into(),
         ..Default::default()
     };
     let g = generate(
         &components,
         &answers,
+        &MountSelection::default(),
         &Images::default(),
         BasicAuthEncoding::Plaintext,
     );
@@ -84,4 +86,17 @@ fn main() {
         g.compose_yaml
     );
     println!("=== arkime.env ===\n{}", g.env_file);
+
+    // Plugins screen (wise component forces wise.so on).
+    app.components.wise = true;
+    app.plugin_checked = vec![true, true, false, false];
+    app.cursor = 1;
+    app.step = WizardStep::Plugins;
+    println!("=== Plugins screen ===\n{}", render(&app));
+
+    // Docker mounts screen.
+    app.deployment = Some(Deployment::Docker);
+    app.cursor = 0;
+    app.step = WizardStep::DockerMounts;
+    println!("=== Docker mounts screen ===\n{}", render(&app));
 }

@@ -18,6 +18,9 @@ pub struct Answers {
     pub install_demo_es: bool,
     /// Whether to download GeoIP files (native mode only).
     pub download_geoip: bool,
+    /// `;`-separated capture plugin list (already finalized, incl. wise.so when
+    /// the wise component is enabled). Empty means none.
+    pub plugins: String,
 }
 
 impl Answers {

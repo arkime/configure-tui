@@ -55,6 +55,33 @@ pub fn inject_basic_auth(config: &mut String, user: &str, pass: &str, enc: Basic
     );
 }
 
+/// Set an INI `key=value`, replacing the first existing line for `key` —
+/// commented (`# key=`) or not — or appending it if absent. Used for the
+/// `plugins=` line, which ships commented in the sample.
+pub fn set_ini_key(config: &str, key: &str, value: &str) -> String {
+    let needle = format!("{key}=");
+    let mut replaced = false;
+    let mut lines: Vec<String> = Vec::with_capacity(config.lines().count() + 1);
+    for line in config.lines() {
+        let bare = line.trim_start();
+        let bare = bare.strip_prefix('#').map(str::trim_start).unwrap_or(bare);
+        if !replaced && bare.starts_with(&needle) {
+            lines.push(format!("{key}={value}"));
+            replaced = true;
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+    let mut out = lines.join("\n");
+    if config.ends_with('\n') {
+        out.push('\n');
+    }
+    if !replaced {
+        out.push_str(&format!("{key}={value}\n"));
+    }
+    out
+}
+
 /// The `elasticsearchBasicAuth` value alone (`user:pass` or its base64 form).
 /// Shared by the native `.ini` injection and the docker `ARKIME__*` env output.
 pub fn basic_auth_value(user: &str, pass: &str, enc: BasicAuthEncoding) -> String {
@@ -158,6 +185,30 @@ mod tests {
         let before = config.clone();
         inject_basic_auth(&mut config, "admin", "pass", BasicAuthEncoding::Plaintext);
         assert_eq!(config, before);
+    }
+
+    #[test]
+    fn set_ini_key_uncomments_existing_line() {
+        let cfg = "pluginsDir=/opt/arkime/plugins\n# plugins=tagger.so; netflow.so\nfoo=1\n";
+        let out = set_ini_key(cfg, "plugins", "wise.so;entropy.so");
+        assert_eq!(
+            out,
+            "pluginsDir=/opt/arkime/plugins\nplugins=wise.so;entropy.so\nfoo=1\n"
+        );
+    }
+
+    #[test]
+    fn set_ini_key_does_not_match_pluginsdir() {
+        // The `pluginsDir=` line must not be mistaken for `plugins=`.
+        let cfg = "pluginsDir=/opt/arkime/plugins\n";
+        let out = set_ini_key(cfg, "plugins", "wise.so");
+        assert_eq!(out, "pluginsDir=/opt/arkime/plugins\nplugins=wise.so\n");
+    }
+
+    #[test]
+    fn set_ini_key_appends_when_absent() {
+        let out = set_ini_key("a=1\n", "plugins", "wise.so");
+        assert_eq!(out, "a=1\nplugins=wise.so\n");
     }
 
     #[test]
