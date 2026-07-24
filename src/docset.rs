@@ -392,7 +392,13 @@ fn fill_arkime_service(
             );
             svc.remove(Value::from("ports"));
         }
-        Component::Viewer => port(svc, "8005:8005"),
+        // Viewer runs on host networking too so it can reach a host-net ES on
+        // localhost:9200 (no port mapping needed with host net).
+        Component::Viewer => {
+            set_str(svc, "network_mode", "host");
+            svc.remove(Value::from("cap_add"));
+            svc.remove(Value::from("ports"));
+        }
         Component::Wise => port(svc, "8081:8081"),
         Component::Parliament => port(svc, "8008:8008"),
         Component::Cont3xt => port(svc, "3218:3218"),
@@ -661,6 +667,19 @@ mod tests {
         parse_compose(&out, &mut c, &mut ans, &mut m);
         assert!(ans.install_demo_es);
         assert_eq!(ans.es_data_dir, "/esdata");
+    }
+
+    #[test]
+    fn viewer_runs_on_host_networking() {
+        let components = Components {
+            viewer: true,
+            ..Default::default()
+        };
+        let out = out_default(&components, &answers());
+        // The viewer service uses host net and no published ports.
+        let viewer = out.split("arkime-viewer:").nth(1).unwrap();
+        assert!(viewer.contains("network_mode: host"));
+        assert!(!viewer.contains("ports:"));
     }
 
     fn out_default(components: &Components, a: &Answers) -> String {
