@@ -705,6 +705,15 @@ impl App {
 
     // --- load ------------------------------------------------------------
 
+    /// The directory containing `path`, resolving a bare filename (no directory
+    /// component) to the current working directory rather than an empty path.
+    fn dir_of(path: &std::path::Path) -> PathBuf {
+        match path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+            _ => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        }
+    }
+
     /// Read the file(s) at the load path into documents and prefill the wizard.
     fn load_from_path(&mut self) -> std::io::Result<()> {
         let raw = self.fields.load_path.value().trim().to_string();
@@ -714,19 +723,21 @@ impl App {
         match self.deployment {
             Some(Deployment::Docker) => {
                 let text = std::fs::read_to_string(&path)?;
-                self.out_dir = path
-                    .parent()
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_else(|| PathBuf::from("."));
+                self.out_dir = Self::dir_of(&path);
                 docset::parse_compose(
                     &text,
                     &mut self.components,
                     &mut self.answers,
                     &mut self.docker_mounts,
                 );
+                // Write back to an absolute path under out_dir.
+                let compose_name = path
+                    .file_name()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from(DocKind::Compose.filename()));
                 self.docs.push(Document {
                     kind: DocKind::Compose,
-                    path: path.clone(),
+                    path: self.out_dir.join(compose_name),
                     text,
                 });
                 // Sibling env file, if present.
@@ -744,9 +755,7 @@ impl App {
                 let dir = if path.is_dir() {
                     path.clone()
                 } else {
-                    path.parent()
-                        .map(|p| p.to_path_buf())
-                        .unwrap_or(path.clone())
+                    Self::dir_of(&path)
                 };
                 let mut any = false;
                 for (kind, comp) in [
@@ -1320,6 +1329,20 @@ mod tests {
         // ...and the unknown var is preserved in the re-synced document.
         let env = a.docs.iter().find(|d| d.kind == DocKind::Env).unwrap();
         assert!(env.text.contains("MY_UNKNOWN=keep"));
+    }
+
+    #[test]
+    fn dir_of_resolves_bare_filename_to_cwd() {
+        // A bare filename has an empty parent — resolve it to an absolute CWD,
+        // not an empty path (which produced a blank "cd  && docker compose up").
+        let d = App::dir_of(std::path::Path::new("docker-compose.yml"));
+        assert!(!d.as_os_str().is_empty());
+        assert!(d.is_absolute());
+        // A real directory component is kept as-is.
+        assert_eq!(
+            App::dir_of(std::path::Path::new("/srv/arkime/docker-compose.yml")),
+            std::path::Path::new("/srv/arkime")
+        );
     }
 
     #[test]
