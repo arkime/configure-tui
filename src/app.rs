@@ -28,6 +28,7 @@ pub struct Fields {
     pub es_password: Input,
     pub s2s: Input,
     pub plugins: Input,
+    pub wise_url: Input,
 }
 
 pub struct App {
@@ -80,6 +81,7 @@ impl App {
         };
         fields.interface = Input::new(iface_default);
         fields.es_url = Input::new(Answers::DEFAULT_ES_URL.to_string());
+        fields.wise_url = Input::new(Answers::DEFAULT_WISE_URL.to_string());
 
         // Pre-check the first detected interface (common single-NIC case). With
         // nothing detected there is nothing to check, so start in advanced mode.
@@ -117,13 +119,27 @@ impl App {
     }
 
     fn advance(&mut self) {
-        self.step = steps::next(self.step, self.deployment, &self.components);
+        let w = self.wise_url_needed();
+        self.step = steps::next(self.step, self.deployment, &self.components, w);
         self.on_enter_step();
     }
 
     fn retreat(&mut self) {
-        self.step = steps::prev(self.step, self.deployment, &self.components);
+        let w = self.wise_url_needed();
+        self.step = steps::prev(self.step, self.deployment, &self.components, w);
         self.on_enter_step();
+    }
+
+    /// The external WISE URL is only asked for when the wise.so plugin is
+    /// enabled but the wise component is NOT being deployed locally.
+    fn wise_url_needed(&self) -> bool {
+        self.components.capture
+            && !self.components.wise
+            && self
+                .answers
+                .plugins
+                .split(';')
+                .any(|p| p.trim() == plugins::WISE_PLUGIN)
     }
 
     /// Reset per-screen transient cursor state when a screen becomes active.
@@ -173,6 +189,7 @@ impl App {
             WizardStep::Elasticsearch => self.key_elasticsearch(key),
             WizardStep::S2sPassword => self.key_s2s(key),
             WizardStep::Plugins => self.key_plugins(key),
+            WizardStep::WiseUrl => self.key_wise_url(key),
             WizardStep::DockerMounts => self.key_docker_mounts(key),
             WizardStep::GeoIp => self.key_geoip(key),
             WizardStep::Review => self.key_review(key),
@@ -352,6 +369,19 @@ impl App {
         // finalize() forces wise.so on when the wise component is enabled.
         self.answers.plugins = plugins::finalize(&raw, self.components.wise);
         self.advance();
+    }
+
+    fn key_wise_url(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter => {
+                self.answers.wise_url = self.fields.wise_url.value().trim().to_string();
+                self.advance();
+            }
+            KeyCode::Left => self.retreat(),
+            _ => {
+                self.fields.wise_url.handle_event(&Event::Key(key));
+            }
+        }
     }
 
     /// Docker mounts screen: toggle the suggested host bind mounts relevant to
@@ -667,6 +697,43 @@ mod tests {
         press(&mut a, KeyCode::Char(' '));
         press(&mut a, KeyCode::Enter);
         assert_eq!(a.answers.plugins, "ja4plus.amd64.so;entropy.so");
+    }
+
+    #[test]
+    fn wise_plugin_without_component_asks_for_wise_url() {
+        let mut a = app();
+        a.components = Components {
+            capture: true,
+            ..Default::default()
+        };
+        a.step = WizardStep::Plugins;
+        a.on_enter_step();
+        // Check wise.so (index 0) and proceed.
+        a.cursor = 0;
+        press(&mut a, KeyCode::Char(' '));
+        press(&mut a, KeyCode::Enter);
+        assert_eq!(a.answers.plugins, "wise.so");
+        assert_eq!(a.step, WizardStep::WiseUrl);
+
+        // Default is prefilled; accept it.
+        press(&mut a, KeyCode::Enter);
+        assert_eq!(a.answers.wise_url, Answers::DEFAULT_WISE_URL);
+    }
+
+    #[test]
+    fn wise_component_does_not_ask_for_wise_url() {
+        let mut a = app();
+        a.components = Components {
+            capture: true,
+            wise: true,
+            ..Default::default()
+        };
+        a.step = WizardStep::Plugins;
+        a.on_enter_step();
+        press(&mut a, KeyCode::Enter); // wise.so forced on
+        assert_eq!(a.answers.plugins, "wise.so");
+        // Local wise deployment -> no external URL step.
+        assert_ne!(a.step, WizardStep::WiseUrl);
     }
 
     #[test]

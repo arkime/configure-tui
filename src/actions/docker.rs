@@ -179,6 +179,9 @@ fn env_file(components: &Components, answers: &Answers, basic_auth: BasicAuthEnc
     if !answers.plugins.is_empty() {
         vars.insert("ARKIME__plugins".into(), answers.plugins.clone());
     }
+    if !answers.wise_url.is_empty() {
+        vars.insert("ARKIME__wiseURL".into(), answers.wise_url.clone());
+    }
 
     let mut out = String::new();
     for (k, v) in vars {

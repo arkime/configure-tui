@@ -18,9 +18,10 @@ dependencies, so it can be produced once and pulled into the rpm/deb packages.
 3. **Interfaces** (capture only; checkbox list of detected NICs + advanced
    free-type), **OpenSearch/Elasticsearch** (URL/user/password + optional local
    demo), **Encryption password**, **Plugins** (capture only; checkbox list,
-   auto-enables `wise.so` when the wise component is on), **GeoIP** (native +
-   capture), **Docker mounts** (docker only; suggested host bind mounts,
-   toggleable).
+   auto-enables `wise.so` when the wise component is on), **WISE URL** (only when
+   `wise.so` is enabled without deploying the wise component — points capture at
+   an external WISE), **GeoIP** (native + capture), **Docker mounts** (docker
+   only; suggested host bind mounts, toggleable).
 4. **Review** → **Apply** → live progress log.
 
 Docker mode suggests these host mounts (all on by default, individually

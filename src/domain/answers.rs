@@ -21,11 +21,17 @@ pub struct Answers {
     /// `;`-separated capture plugin list (already finalized, incl. wise.so when
     /// the wise component is enabled). Empty means none.
     pub plugins: String,
+    /// External WISE service URL, set only when the wise.so plugin is enabled
+    /// without deploying the wise component locally. Empty means unset.
+    pub wise_url: String,
 }
 
 impl Answers {
     /// Default ES URL used when the admin leaves the field blank, matching bash.
     pub const DEFAULT_ES_URL: &'static str = "https://localhost:9200";
+
+    /// Default WISE URL suggested when configuring an external WISE service.
+    pub const DEFAULT_WISE_URL: &'static str = "http://127.0.0.1:8081";
 
     pub fn has_es_user(&self) -> bool {
         !self.es_user.is_empty()

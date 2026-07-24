@@ -163,6 +163,10 @@ fn write_ini(
     if kind == SampleKind::Config && !answers.plugins.is_empty() {
         rendered = crate::config::substitute::set_ini_key(&rendered, "plugins", &answers.plugins);
     }
+    // External WISE endpoint for the wise.so plugin.
+    if kind == SampleKind::Config && !answers.wise_url.is_empty() {
+        rendered = crate::config::substitute::set_ini_key(&rendered, "wiseURL", &answers.wise_url);
+    }
 
     let out = etc.join(format!("{}.ini", kind.base()));
     match ops.write_new(&out, &rendered) {

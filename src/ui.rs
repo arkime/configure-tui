@@ -62,6 +62,7 @@ fn step_title(step: WizardStep) -> &'static str {
         WizardStep::Elasticsearch => "OpenSearch / Elasticsearch",
         WizardStep::S2sPassword => "Encryption password",
         WizardStep::Plugins => "Capture plugins",
+        WizardStep::WiseUrl => "WISE URL",
         WizardStep::DockerMounts => "Docker mounts",
         WizardStep::GeoIp => "GeoIP",
         WizardStep::Review => "Review",
@@ -81,6 +82,7 @@ fn render_body(app: &App, f: &mut Frame, area: Rect) {
         WizardStep::Elasticsearch => render_elasticsearch(app, f, inner),
         WizardStep::S2sPassword => render_s2s(app, f, inner),
         WizardStep::Plugins => render_plugins(app, f, inner),
+        WizardStep::WiseUrl => render_wise_url(app, f, inner),
         WizardStep::DockerMounts => render_docker_mounts(app, f, inner),
         WizardStep::GeoIp => render_geoip(app, f, inner),
         WizardStep::Review => render_review(app, f, inner),
@@ -292,6 +294,19 @@ fn render_plugins(app: &App, f: &mut Frame, area: Rect) {
     f.render_widget(Paragraph::new(lines), area);
 }
 
+fn render_wise_url(app: &App, f: &mut Frame, area: Rect) {
+    let lines = vec![
+        Line::from("wise.so is enabled but the wise component isn't deployed here."),
+        Line::from(Span::styled(
+            "Enter the URL of the external WISE service capture should query.",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(""),
+        field_line("WISE URL", app.fields.wise_url.value(), true),
+    ];
+    f.render_widget(Paragraph::new(lines), area);
+}
+
 fn render_docker_mounts(app: &App, f: &mut Frame, area: Rect) {
     let relevant = MountSelection::relevant_kinds(&app.components);
     let mut lines = vec![
@@ -388,6 +403,9 @@ fn render_review(app: &App, f: &mut Frame, area: Rect) {
             &app.answers.plugins
         };
         lines.push(kv("Plugins", plugins));
+        if !app.answers.wise_url.is_empty() {
+            lines.push(kv("WISE URL", &app.answers.wise_url));
+        }
     }
     if app.deployment == Some(Deployment::Native) && app.components.capture {
         lines.push(kv(
@@ -467,6 +485,7 @@ fn render_footer(app: &App, f: &mut Frame, area: Rect) {
                 "↑↓ move · space toggle · a custom · Enter next · ← back"
             }
         }
+        WizardStep::WiseUrl => "type · Enter next · ← back · Esc quit",
         WizardStep::DockerMounts => "↑↓ move · space toggle · Enter next · ← back",
         WizardStep::Elasticsearch => "Tab/↑↓ field · type · space (demo) · Enter next · ← back",
         WizardStep::GeoIp => "y/n · Enter next · ← back · Esc quit",

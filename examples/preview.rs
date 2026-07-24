@@ -94,8 +94,14 @@ fn main() {
     app.step = WizardStep::Plugins;
     println!("=== Plugins screen ===\n{}", render(&app));
 
+    // WISE URL screen (wise.so enabled, no wise component).
+    app.components.wise = false;
+    app.step = WizardStep::WiseUrl;
+    println!("=== WISE URL screen ===\n{}", render(&app));
+
     // Docker mounts screen.
     app.deployment = Some(Deployment::Docker);
+    app.components.wise = true;
     app.cursor = 0;
     app.step = WizardStep::DockerMounts;
     println!("=== Docker mounts screen ===\n{}", render(&app));

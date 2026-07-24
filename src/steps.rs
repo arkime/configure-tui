@@ -21,6 +21,9 @@ pub enum WizardStep {
     S2sPassword,
     /// Capture plugin selection (capture only).
     Plugins,
+    /// External WISE URL (only when wise.so is enabled without the wise
+    /// component).
+    WiseUrl,
     /// GeoIP download prompt (native + capture only).
     GeoIp,
     /// Suggested host bind mounts (docker only).
@@ -38,7 +41,11 @@ pub enum WizardStep {
 /// `deployment` is `None` only before the first screen is answered; in that
 /// case we still return the full skeleton so `next`/`prev` have something to
 /// walk. Component-dependent steps are filtered once components are known.
-pub fn required_steps(deployment: Option<Deployment>, components: &Components) -> Vec<WizardStep> {
+pub fn required_steps(
+    deployment: Option<Deployment>,
+    components: &Components,
+    wise_url_needed: bool,
+) -> Vec<WizardStep> {
     let mut steps = vec![WizardStep::DeploymentSelect, WizardStep::ComponentsSelect];
 
     if components.needs_interfaces() {
@@ -53,6 +60,10 @@ pub fn required_steps(deployment: Option<Deployment>, components: &Components) -
     // Plugins are loaded by capture, in both deployments.
     if components.capture {
         steps.push(WizardStep::Plugins);
+    }
+    // External WISE endpoint: wise.so enabled but no local wise component.
+    if wise_url_needed {
+        steps.push(WizardStep::WiseUrl);
     }
     // GeoIP is a native-only action, and only relevant when capturing.
     if deployment == Some(Deployment::Native) && components.capture {
@@ -75,8 +86,9 @@ pub fn next(
     current: WizardStep,
     deployment: Option<Deployment>,
     components: &Components,
+    wise_url_needed: bool,
 ) -> WizardStep {
-    let steps = required_steps(deployment, components);
+    let steps = required_steps(deployment, components, wise_url_needed);
     match steps.iter().position(|&s| s == current) {
         Some(i) if i + 1 < steps.len() => steps[i + 1],
         // `current` may not be in the list if selections changed under it; fall
@@ -90,8 +102,9 @@ pub fn prev(
     current: WizardStep,
     deployment: Option<Deployment>,
     components: &Components,
+    wise_url_needed: bool,
 ) -> WizardStep {
-    let steps = required_steps(deployment, components);
+    let steps = required_steps(deployment, components, wise_url_needed);
     match steps.iter().position(|&s| s == current) {
         Some(i) if i > 0 => steps[i - 1],
         _ => current,
@@ -113,7 +126,7 @@ mod tests {
 
     #[test]
     fn native_capture_viewer_full_flow() {
-        let steps = required_steps(Some(Deployment::Native), &caps());
+        let steps = required_steps(Some(Deployment::Native), &caps(), false);
         assert_eq!(
             steps,
             vec![
@@ -133,11 +146,24 @@ mod tests {
 
     #[test]
     fn docker_skips_geoip() {
-        let steps = required_steps(Some(Deployment::Docker), &caps());
+        let steps = required_steps(Some(Deployment::Docker), &caps(), false);
         assert!(!steps.contains(&WizardStep::GeoIp));
         assert!(steps.contains(&WizardStep::Interfaces));
         assert!(steps.contains(&WizardStep::DockerMounts));
         assert!(steps.contains(&WizardStep::Plugins));
+    }
+
+    #[test]
+    fn wise_url_step_appears_only_when_needed() {
+        // capture with wise.so but no wise component -> WiseUrl step.
+        let cap = Components {
+            capture: true,
+            ..Default::default()
+        };
+        assert!(required_steps(Some(Deployment::Native), &cap, true).contains(&WizardStep::WiseUrl));
+        assert!(
+            !required_steps(Some(Deployment::Native), &cap, false).contains(&WizardStep::WiseUrl)
+        );
     }
 
     #[test]
@@ -146,7 +172,7 @@ mod tests {
             wise: true,
             ..Default::default()
         };
-        let steps = required_steps(Some(Deployment::Native), &wise);
+        let steps = required_steps(Some(Deployment::Native), &wise, false);
         assert!(!steps.contains(&WizardStep::Interfaces));
         assert!(!steps.contains(&WizardStep::S2sPassword));
         assert!(!steps.contains(&WizardStep::GeoIp));
@@ -160,7 +186,7 @@ mod tests {
             cont3xt: true,
             ..Default::default()
         };
-        let steps = required_steps(Some(Deployment::Native), &c);
+        let steps = required_steps(Some(Deployment::Native), &c, false);
         assert!(steps.contains(&WizardStep::Elasticsearch));
         assert!(steps.contains(&WizardStep::S2sPassword));
         assert!(!steps.contains(&WizardStep::Interfaces));
@@ -171,17 +197,17 @@ mod tests {
     fn next_and_prev_are_inverse_across_flow() {
         let d = Some(Deployment::Native);
         let c = caps();
-        let steps = required_steps(d, &c);
+        let steps = required_steps(d, &c, true);
         for win in steps.windows(2) {
-            assert_eq!(next(win[0], d, &c), win[1]);
-            assert_eq!(prev(win[1], d, &c), win[0]);
+            assert_eq!(next(win[0], d, &c, true), win[1]);
+            assert_eq!(prev(win[1], d, &c, true), win[0]);
         }
         // Ends are clamped.
         assert_eq!(
-            prev(WizardStep::DeploymentSelect, d, &c),
+            prev(WizardStep::DeploymentSelect, d, &c, true),
             WizardStep::DeploymentSelect
         );
-        assert_eq!(next(WizardStep::Done, d, &c), WizardStep::Done);
+        assert_eq!(next(WizardStep::Done, d, &c, true), WizardStep::Done);
     }
 
     #[test]
@@ -195,7 +221,7 @@ mod tests {
                     parliament: mask & 8 != 0,
                     cont3xt: mask & 16 != 0,
                 };
-                let steps = required_steps(Some(dep), &c);
+                let steps = required_steps(Some(dep), &c, false);
                 let review = steps.iter().position(|&s| s == WizardStep::Review).unwrap();
                 let progress = steps
                     .iter()
