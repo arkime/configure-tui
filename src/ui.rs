@@ -26,6 +26,10 @@ pub fn view(app: &App, f: &mut Frame) {
     render_header(app, f, chunks[0]);
     render_body(app, f, chunks[1]);
     render_footer(app, f, chunks[2]);
+
+    if app.editor.is_some() {
+        render_editor(app, f);
+    }
 }
 
 fn render_header(app: &App, f: &mut Frame, area: Rect) {
@@ -56,7 +60,8 @@ fn render_header(app: &App, f: &mut Frame, area: Rect) {
 
 fn step_title(step: WizardStep) -> &'static str {
     match step {
-        WizardStep::DeploymentSelect => "Deployment",
+        WizardStep::StartSelect => "Start",
+        WizardStep::LoadPath => "Load file",
         WizardStep::ComponentsSelect => "Components",
         WizardStep::Interfaces => "Interfaces",
         WizardStep::Elasticsearch => "OpenSearch / Elasticsearch",
@@ -76,7 +81,8 @@ fn render_body(app: &App, f: &mut Frame, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
     match app.step {
-        WizardStep::DeploymentSelect => render_deployment(app, f, inner),
+        WizardStep::StartSelect => render_start(app, f, inner),
+        WizardStep::LoadPath => render_load_path(app, f, inner),
         WizardStep::ComponentsSelect => render_components(app, f, inner),
         WizardStep::Interfaces => render_interfaces(app, f, inner),
         WizardStep::Elasticsearch => render_elasticsearch(app, f, inner),
@@ -101,12 +107,38 @@ fn selectable(label: &str, selected: bool) -> Line<'static> {
     Line::from(Span::styled(format!("{marker}{label}"), style))
 }
 
-fn render_deployment(app: &App, f: &mut Frame, area: Rect) {
-    let lines = vec![
-        Line::from("How do you want to run Arkime?"),
+fn render_start(app: &App, f: &mut Frame, area: Rect) {
+    let modes = crate::domain::StartMode::available(app.platform.os);
+    let mut lines = vec![
+        Line::from("How do you want to configure Arkime?"),
         Line::from(""),
-        selectable(Deployment::Native.label(), app.cursor == 0),
-        selectable(Deployment::Docker.label(), app.cursor == 1),
+    ];
+    for (i, m) in modes.iter().enumerate() {
+        lines.push(selectable(m.label(), i == app.cursor));
+    }
+    if app.platform.os == crate::domain::Os::MacOs {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "(native modes are unavailable on macOS — docker only)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    f.render_widget(Paragraph::new(lines), area);
+}
+
+fn render_load_path(app: &App, f: &mut Frame, area: Rect) {
+    let what = match app.deployment {
+        Some(Deployment::Docker) => "Path to the docker-compose.yml to load and update:",
+        _ => "Path to the etc directory containing the .ini files to load:",
+    };
+    let lines = vec![
+        Line::from(what),
+        Line::from(Span::styled(
+            "Everything we don't understand is preserved on write-back.",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(""),
+        field_line("path", app.fields.load_path.value(), true),
     ];
     f.render_widget(Paragraph::new(lines), area);
 }
@@ -475,32 +507,39 @@ fn render_progress(app: &App, f: &mut Frame, area: Rect) {
 }
 
 fn render_footer(app: &App, f: &mut Frame, area: Rect) {
+    // Every screen (once files exist) offers the editor via ^E.
+    let edit = if app.docs.is_empty() {
+        ""
+    } else {
+        " · ^E edit files"
+    };
     let help = match app.step {
-        WizardStep::DeploymentSelect => "↑↓ choose · Enter select · Esc quit",
-        WizardStep::ComponentsSelect => "↑↓ move · space toggle · Enter next · ← back · Esc quit",
+        WizardStep::StartSelect => "↑↓ choose · Enter select · Esc quit",
+        WizardStep::LoadPath => "type path · Enter load · Esc back",
+        WizardStep::ComponentsSelect => "↑↓ move · space toggle · Enter next · Esc back",
         WizardStep::Interfaces => {
             if app.interface_advanced {
-                "type · Tab checkboxes · Enter next · Esc quit"
+                "type · Tab checkboxes · Enter next · Esc back"
             } else {
-                "↑↓ move · space toggle · a advanced · Enter next · ← back"
+                "↑↓ move · space toggle · a advanced · Enter next · Esc back"
             }
         }
-        WizardStep::S2sPassword => "type · Enter next · ← back · Esc quit",
+        WizardStep::S2sPassword => "type · Enter next · Esc back",
         WizardStep::Plugins => {
             if app.plugin_advanced {
-                "type · Tab checkboxes · Enter next · Esc quit"
+                "type · Tab checkboxes · Enter next · Esc back"
             } else {
-                "↑↓ move · space toggle · a custom · Enter next · ← back"
+                "↑↓ move · space toggle · a custom · Enter next · Esc back"
             }
         }
-        WizardStep::WiseUrl => "type · Enter next · ← back · Esc quit",
-        WizardStep::DockerMounts => "↑↓ move · space toggle · Enter next · ← back",
-        WizardStep::Elasticsearch => "Tab/↑↓ field · type · space (demo) · Enter next · ← back",
-        WizardStep::GeoIp => "y/n · Enter next · ← back · Esc quit",
-        WizardStep::Review => "Enter apply · ← back · Esc quit",
+        WizardStep::WiseUrl => "type · Enter next · Esc back",
+        WizardStep::DockerMounts => "↑↓ move · space toggle · Enter next · Esc back",
+        WizardStep::Elasticsearch => "Tab/↑↓ field · type · space (demo) · Enter next · Esc back",
+        WizardStep::GeoIp => "y/n · Enter next · Esc back",
+        WizardStep::Review => "Enter apply · Esc back",
         WizardStep::Progress => {
             if app.applied {
-                "Enter/q exit"
+                "Enter/Esc exit"
             } else {
                 "applying…"
             }
@@ -510,10 +549,66 @@ fn render_footer(app: &App, f: &mut Frame, area: Rect) {
     let line = if let Some(err) = &app.error {
         Line::from(Span::styled(err.clone(), Style::default().fg(Color::Red)))
     } else {
-        Line::from(Span::styled(help, Style::default().fg(Color::DarkGray)))
+        Line::from(Span::styled(
+            format!("{help}{edit}"),
+            Style::default().fg(Color::DarkGray),
+        ))
     };
     f.render_widget(
         Paragraph::new(line).block(Block::default().borders(Borders::TOP)),
         area,
+    );
+}
+
+/// Full-screen editor overlay with a tab per document.
+fn render_editor(app: &App, f: &mut Frame) {
+    let ed = app.editor.as_ref().unwrap();
+    let area = f.area();
+    // Clear behind the overlay.
+    f.render_widget(ratatui::widgets::Clear, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    // Tab bar.
+    let mut spans = vec![Span::styled(
+        " EDIT ",
+        Style::default()
+            .fg(Color::Black)
+            .bg(ACCENT)
+            .add_modifier(Modifier::BOLD),
+    )];
+    for (i, d) in app.docs.iter().enumerate() {
+        let sel = i == ed.tab;
+        let style = if sel {
+            Style::default()
+                .fg(ACCENT)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(d.kind.filename().to_string(), style));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), chunks[0]);
+
+    // Active text area.
+    if let Some(area_w) = ed.areas.get(ed.tab) {
+        f.render_widget(area_w, chunks[1]);
+    }
+
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            "Tab/Shift-Tab switch file · edit freely · Esc/^E done (syncs back to wizard)",
+            Style::default().fg(Color::DarkGray),
+        ))
+        .block(Block::default().borders(Borders::TOP)),
+        chunks[2],
     );
 }

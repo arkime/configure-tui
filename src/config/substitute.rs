@@ -59,6 +59,13 @@ pub fn inject_basic_auth(config: &mut String, user: &str, pass: &str, enc: Basic
 /// commented (`# key=`) or not — or appending it if absent. Used for the
 /// `plugins=` line, which ships commented in the sample.
 pub fn set_ini_key(config: &str, key: &str, value: &str) -> String {
+    set_ini_key_opt(config, key, value, true)
+}
+
+/// Like [`set_ini_key`] but `append_if_missing` controls whether a new line is
+/// added when no `key=` line exists. Use `false` for files where appending an
+/// unrelated key would be wrong (e.g. wise.ini).
+pub fn set_ini_key_opt(config: &str, key: &str, value: &str, append_if_missing: bool) -> String {
     let needle = format!("{key}=");
     let mut replaced = false;
     let mut lines: Vec<String> = Vec::with_capacity(config.lines().count() + 1);
@@ -76,10 +83,27 @@ pub fn set_ini_key(config: &str, key: &str, value: &str) -> String {
     if config.ends_with('\n') {
         out.push('\n');
     }
-    if !replaced {
+    if !replaced && append_if_missing {
         out.push_str(&format!("{key}={value}\n"));
     }
     out
+}
+
+/// Read the value of an INI `key=` line, ignoring commented lines. Returns the
+/// first uncommented match, trimmed. Used to prefill the wizard from a loaded
+/// config.
+pub fn get_ini_key(config: &str, key: &str) -> Option<String> {
+    let needle = format!("{key}=");
+    for line in config.lines() {
+        let bare = line.trim_start();
+        if bare.starts_with('#') {
+            continue;
+        }
+        if let Some(rest) = bare.strip_prefix(&needle) {
+            return Some(rest.trim().to_string());
+        }
+    }
+    None
 }
 
 /// The `elasticsearchBasicAuth` value alone (`user:pass` or its base64 form).

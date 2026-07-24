@@ -4,6 +4,7 @@
 pub mod actions;
 pub mod app;
 pub mod config;
+pub mod docset;
 pub mod domain;
 pub mod guards;
 pub mod interfaces;

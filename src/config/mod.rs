@@ -5,6 +5,7 @@ pub mod substitute;
 pub mod templates;
 
 pub use substitute::{
-    basic_auth_value, inject_basic_auth, render, set_ini_key, BasicAuthEncoding, Substitutions,
+    basic_auth_value, get_ini_key, inject_basic_auth, render, set_ini_key, set_ini_key_opt,
+    BasicAuthEncoding, Substitutions,
 };
 pub use templates::{load_sample, write_if_absent, SampleKind, WriteOutcome};

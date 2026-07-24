@@ -12,17 +12,43 @@ dependencies, so it can be produced once and pulled into the rpm/deb packages.
 
 ## Wizard flow
 
-1. **Deployment** — Native vs Docker (everything branches on this).
-2. **Components** — multi-select toggles; later prompts are the union of what the
+1. **Start** — one of four modes (everything branches here):
+   - Docker — create a new `docker-compose`
+   - Docker — load an existing `docker-compose`
+   - Run on machine — create new `.ini` files
+   - Run on machine — load existing `.ini` files
+
+   On macOS only the two docker modes appear (native needs Linux/FreeBSD).
+2. **Load file** (load modes only) — path to the compose file / etc dir. The
+   wizard prefills components and values from it.
+3. **Components** — multi-select toggles; later prompts are the union of what the
    selected components need.
-3. **Interfaces** (capture only; checkbox list of detected NICs + advanced
+4. **Interfaces** (capture only; checkbox list of detected NICs + advanced
    free-type), **OpenSearch/Elasticsearch** (URL/user/password + optional local
    demo), **Encryption password**, **Plugins** (capture only; checkbox list,
    auto-enables `wise.so` when the wise component is on), **WISE URL** (only when
    `wise.so` is enabled without deploying the wise component — points capture at
    an external WISE), **GeoIP** (native + capture), **Docker mounts** (docker
    only; suggested host bind mounts, toggleable).
-4. **Review** → **Apply** → live progress log.
+5. **Review** → **Apply** → live progress log.
+
+Navigation: **Enter** advances, **Esc** goes back (or quits on the first
+screen).
+
+### In-memory documents & the `^E` editor
+
+Every output file (`docker-compose.yml` + `arkime.env`, or `config.ini` /
+`wise.ini` / `cont3xt.ini`) is kept as an in-memory text buffer. Wizard changes
+merge the understood fields into it while **preserving everything we don't
+understand** (unknown compose services/keys, unknown `ARKIME__*` vars, unknown
+ini keys). **Nothing is written to disk until the final apply** (load modes
+overwrite the loaded file; new modes never clobber an existing one).
+
+Press **`^E`** (Ctrl-E) at any time — or `e` on a non-typing screen — to open a
+full-file editor with a **tab per file** (`Tab`/`Shift-Tab` cycles). Edit the
+fully-substituted text freely; on exit (`Esc`) the understood fields are parsed
+back into the wizard. Editor and wizard are two views of the same data,
+last-write-wins.
 
 Docker mode suggests these host mounts (all on by default, individually
 toggleable), attached to the capture/viewer services:

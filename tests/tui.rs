@@ -59,12 +59,13 @@ fn s2s_password_is_masked_never_plaintext() {
 }
 
 #[test]
-fn deployment_screen_shows_both_options() {
+fn startup_screen_shows_the_four_modes() {
     let app = app();
     let screen = render(&app);
-    assert!(screen.contains("Native"));
     assert!(screen.contains("Docker"));
-    assert!(screen.contains("Deployment"));
+    assert!(screen.contains("Run on machine"));
+    assert!(screen.contains("create"));
+    assert!(screen.contains("load"));
 }
 
 #[test]

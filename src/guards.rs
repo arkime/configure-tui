@@ -1,8 +1,10 @@
-//! Pre-flight checks run before the TUI starts: refuse macOS, detect FreeBSD.
+//! Pre-flight checks run before the TUI starts.
 //!
-//! Root is NOT required to start — docker mode only writes compose/env files to
-//! a directory and needs no privileges. The root requirement is deferred to
-//! apply time and enforced only for the native deployment (see `app::run_apply`).
+//! - macOS is allowed but **docker-only** (native needs Linux/FreeBSD +
+//!   systemd/rc.d + root); the startup screen hides native there.
+//! - Root is NOT required to start — docker only writes files. The root
+//!   requirement is deferred to apply time for the native deployment (see
+//!   `app::run_apply`).
 
 use crate::domain::{Os, Platform};
 
@@ -17,15 +19,12 @@ pub fn preflight() -> GuardOutcome {
     let platform = Platform::detect();
 
     match platform.os {
-        Os::MacOs => GuardOutcome::Refuse(
-            "This tool does not run on macOS. Create the config files by hand \
-             (see the Arkime docs)."
+        Os::Other => GuardOutcome::Refuse(
+            "Unsupported operating system. Only Linux, FreeBSD, and macOS (docker only) \
+             are supported."
                 .to_string(),
         ),
-        Os::Other => GuardOutcome::Refuse(
-            "Unsupported operating system. Only Linux and FreeBSD are supported.".to_string(),
-        ),
-        Os::Linux | Os::FreeBsd => GuardOutcome::Ok(platform),
+        Os::Linux | Os::FreeBsd | Os::MacOs => GuardOutcome::Ok(platform),
     }
 }
 

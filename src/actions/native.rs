@@ -1,10 +1,9 @@
-//! Native-deployment apply step: template `.ini` files, create dirs, write
-//! limits.d, and enable/start services via the platform's service manager.
-//! Mirrors the bash `Configure` default/wise/cont3xt flows.
+//! Native-deployment system actions: create dirs, write limits.d, download
+//! GeoIP / demo ES, and enable/start services. The `.ini` files themselves are
+//! written from the in-memory documents by the caller — this handles only the
+//! non-file side effects.
 
 use crate::actions::system::SystemOps;
-use crate::config::substitute::{inject_basic_auth, render, BasicAuthEncoding, Substitutions};
-use crate::config::templates::{load_sample, SampleKind};
 use crate::domain::{
     Answers, BuildConfig, Component, Components, Os, Platform, ServiceManagerKind,
 };
@@ -19,56 +18,17 @@ nobody  -       memlock    unlimited
 root    -       memlock    unlimited
 ";
 
-/// Run the full native flow. Never returns Err: each step logs its own outcome
-/// so one failed service does not abort the rest (matching the forgiving bash
-/// behavior). The returned log drives the Progress screen.
-pub fn apply(
+/// Run the native side effects (everything except writing the `.ini` files).
+/// Never returns Err: each step logs its own outcome so one failure does not
+/// abort the rest.
+pub fn system_actions(
     ops: &dyn SystemOps,
     build: &BuildConfig,
     platform: Platform,
     components: &Components,
     answers: &Answers,
-    basic_auth: BasicAuthEncoding,
-) -> Vec<LogLine> {
-    let mut log = Vec::new();
-    let etc = build.etc_dir();
-
-    // 1. Config files for the enabled components.
-    if components.capture || components.viewer {
-        write_ini(
-            ops,
-            &etc,
-            SampleKind::Config,
-            build,
-            answers,
-            basic_auth,
-            &mut log,
-        );
-    }
-    if components.wise {
-        write_ini(
-            ops,
-            &etc,
-            SampleKind::Wise,
-            build,
-            answers,
-            basic_auth,
-            &mut log,
-        );
-    }
-    if components.cont3xt {
-        write_ini(
-            ops,
-            &etc,
-            SampleKind::Cont3xt,
-            build,
-            answers,
-            basic_auth,
-            &mut log,
-        );
-    }
-    // Parliament has no templated .ini in the bash flow — service only.
-
+    log: &mut Vec<LogLine>,
+) {
     // 2. Recreate data dirs (only meaningful when capturing/viewing).
     if components.capture || components.viewer {
         for sub in ["logs", "raw"] {
@@ -88,7 +48,7 @@ pub fn apply(
 
     // 2b. Optional local demo OpenSearch/Elasticsearch (bash lines 205-225).
     if answers.install_demo_es && (components.capture || components.viewer) {
-        install_demo_es(ops, &mut log);
+        install_demo_es(ops, log);
     }
 
     // 3. limits.d (Linux only, and only if the dir exists — bash line 228).
@@ -118,7 +78,7 @@ pub fn apply(
 
     // 5. Services.
     for c in components.enabled() {
-        enable_start_service(ops, platform, c, &mut log);
+        enable_start_service(ops, platform, c, log);
     }
 
     log.push(LogLine::new(
@@ -128,61 +88,6 @@ pub fn apply(
             build.install_dir.display()
         ),
     ));
-    log
-}
-
-fn write_ini(
-    ops: &dyn SystemOps,
-    etc: &Path,
-    kind: SampleKind,
-    build: &BuildConfig,
-    answers: &Answers,
-    basic_auth: BasicAuthEncoding,
-    log: &mut Vec<LogLine>,
-) {
-    let sample = load_sample(etc, kind);
-    let install_dir = build.install_dir.to_string_lossy();
-    let mut rendered = render(
-        &sample,
-        &Substitutions {
-            interface: &answers.interfaces,
-            elasticsearch: answers.elasticsearch_or_default(),
-            password: &answers.s2s_password,
-            install_dir: &install_dir,
-        },
-    );
-    if answers.has_es_user() {
-        inject_basic_auth(
-            &mut rendered,
-            &answers.es_user,
-            &answers.es_password,
-            basic_auth,
-        );
-    }
-    // Capture plugins live in config.ini's [default] section.
-    if kind == SampleKind::Config && !answers.plugins.is_empty() {
-        rendered = crate::config::substitute::set_ini_key(&rendered, "plugins", &answers.plugins);
-    }
-    // External WISE endpoint for the wise.so plugin.
-    if kind == SampleKind::Config && !answers.wise_url.is_empty() {
-        rendered = crate::config::substitute::set_ini_key(&rendered, "wiseURL", &answers.wise_url);
-    }
-
-    let out = etc.join(format!("{}.ini", kind.base()));
-    match ops.write_new(&out, &rendered) {
-        Ok(true) => log.push(LogLine::new(
-            Level::Info,
-            format!("Not overwriting existing {}", out.display()),
-        )),
-        Ok(false) => log.push(LogLine::new(
-            Level::Info,
-            format!("Wrote {}", out.display()),
-        )),
-        Err(e) => log.push(LogLine::new(
-            Level::Error,
-            format!("writing {}: {e}", out.display()),
-        )),
-    }
 }
 
 fn enable_start_service(
@@ -306,20 +211,19 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = apply(
+        let mut log = Vec::new();
+        system_actions(
             &ops,
             &build(),
             platform_systemd(),
             &components,
             &answers,
-            BasicAuthEncoding::Plaintext,
+            &mut log,
         );
 
         let recorded = ops.ops();
-        // config.ini written (once), logs+raw dirs created, both services started.
-        assert!(recorded
-            .iter()
-            .any(|o| matches!(o, Op::WriteNew { path, .. } if path.ends_with("config.ini"))));
+        // logs+raw dirs created, both services started (ini files are written by
+        // the caller from documents, not here).
         assert!(recorded.iter().any(|o| matches!(o, Op::Mkdir { path, mode, owner } if path.ends_with("logs") && *mode == 0o700 && owner == "nobody")));
         assert!(recorded
             .iter()
@@ -345,14 +249,8 @@ mod tests {
             service_manager: ServiceManagerKind::FreeBsdRc,
         };
 
-        let _ = apply(
-            &ops,
-            &build(),
-            platform,
-            &components,
-            &answers,
-            BasicAuthEncoding::Plaintext,
-        );
+        let mut log = Vec::new();
+        system_actions(&ops, &build(), platform, &components, &answers, &mut log);
 
         let recorded = ops.ops();
         assert!(recorded.iter().any(|o| matches!(o, Op::Run { program, args } if program == "sysrc" && args == &["arkimecapture_enable=YES"])));

@@ -1,22 +1,25 @@
 //! The wizard Model + update logic and the terminal run loop.
 
-use crate::actions::docker::{self, Images};
 use crate::actions::native;
 use crate::actions::system::RealOps;
 use crate::config::substitute::BasicAuthEncoding;
+use crate::docset::{self, DocKind, Document, Images};
 use crate::domain::{
     plugins, Answers, BuildConfig, Component, Components, Deployment, MountSelection, Platform,
+    StartMode,
 };
 use crate::interfaces;
 use crate::log::LogLine;
 use crate::steps::{self, WizardStep};
 use crate::ui;
 use anyhow::Result;
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::backend::Backend;
 use ratatui::Terminal;
+use std::path::PathBuf;
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
+use tui_textarea::TextArea;
 
 /// Text fields the wizard edits. Kept as distinct buffers so moving between
 /// screens preserves what was typed.
@@ -29,6 +32,13 @@ pub struct Fields {
     pub s2s: Input,
     pub plugins: Input,
     pub wise_url: Input,
+    pub load_path: Input,
+}
+
+/// The full-file editor overlay: one text buffer per document, Tab-cycled.
+pub struct Editor {
+    pub tab: usize,
+    pub areas: Vec<TextArea<'static>>,
 }
 
 pub struct App {
@@ -36,9 +46,19 @@ pub struct App {
     pub platform: Platform,
     pub basic_auth: BasicAuthEncoding,
 
+    pub start_mode: Option<StartMode>,
     pub deployment: Option<Deployment>,
+    pub is_load: bool,
     pub components: Components,
     pub answers: Answers,
+
+    /// In-memory output files (config.ini/…, or docker-compose.yml + arkime.env).
+    /// The single source of truth for on-disk content; written only at apply.
+    pub docs: Vec<Document>,
+    /// Directory docker files are written to (native ini paths come from build).
+    pub out_dir: PathBuf,
+    /// Full-file editor overlay, when open.
+    pub editor: Option<Editor>,
 
     pub step: WizardStep,
     pub detected_interfaces: Vec<String>,
@@ -95,17 +115,24 @@ impl App {
         }
         let interface_advanced = detected.is_empty();
 
+        let out_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
         App {
             build,
             platform,
             basic_auth: BasicAuthEncoding::default(),
+            start_mode: None,
             deployment: None,
+            is_load: false,
             components: Components::default(),
             answers: Answers {
                 download_geoip: true,
                 ..Default::default()
             },
-            step: WizardStep::DeploymentSelect,
+            docs: Vec::new(),
+            out_dir,
+            editor: None,
+            step: WizardStep::StartSelect,
             detected_interfaces: detected,
             fields,
             cursor: 0,
@@ -125,13 +152,27 @@ impl App {
 
     fn advance(&mut self) {
         let w = self.wise_url_needed();
-        self.step = steps::next(self.step, self.deployment, &self.components, w);
+        self.step = steps::next(
+            self.step,
+            self.deployment,
+            self.is_load,
+            &self.components,
+            w,
+        );
+        self.sync_docs();
         self.on_enter_step();
     }
 
     fn retreat(&mut self) {
         let w = self.wise_url_needed();
-        self.step = steps::prev(self.step, self.deployment, &self.components, w);
+        self.step = steps::prev(
+            self.step,
+            self.deployment,
+            self.is_load,
+            &self.components,
+            w,
+        );
+        self.sync_docs();
         self.on_enter_step();
     }
 
@@ -151,11 +192,16 @@ impl App {
     fn on_enter_step(&mut self) {
         self.error = None;
         match self.step {
-            WizardStep::DeploymentSelect => {
-                self.cursor = match self.deployment {
-                    Some(Deployment::Docker) => 1,
-                    _ => 0,
-                };
+            WizardStep::StartSelect => self.cursor = 0,
+            WizardStep::LoadPath => {
+                // Default load path per deployment.
+                if self.fields.load_path.value().is_empty() {
+                    let default = match self.deployment {
+                        Some(Deployment::Docker) => "docker-compose.yml".to_string(),
+                        _ => self.build.etc_dir().to_string_lossy().to_string(),
+                    };
+                    self.fields.load_path = Input::new(default);
+                }
             }
             WizardStep::ComponentsSelect => self.cursor = 0,
             WizardStep::Interfaces => self.cursor = 0,
@@ -182,13 +228,35 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return;
         }
-        // Global quit.
-        if matches!(key.code, KeyCode::Esc) && self.step != WizardStep::Progress {
-            self.should_quit = true;
+        // The editor overlay swallows all input while open.
+        if self.editor.is_some() {
+            self.editor_key(key);
+            return;
+        }
+        // Ctrl+E opens the editor anywhere; plain 'e' on non-typing screens.
+        let ctrl_e =
+            key.code == KeyCode::Char('e') && key.modifiers.contains(KeyModifiers::CONTROL);
+        let plain_e = matches!(key.code, KeyCode::Char('e')) && !self.screen_is_text_input();
+        if ctrl_e || plain_e {
+            self.open_editor();
+            return;
+        }
+        // Esc = back a screen (or quit on the first screen / after apply).
+        if key.code == KeyCode::Esc {
+            match self.step {
+                WizardStep::StartSelect => self.should_quit = true,
+                WizardStep::Progress | WizardStep::Done => {
+                    if self.applied {
+                        self.should_quit = true;
+                    }
+                }
+                _ => self.retreat(),
+            }
             return;
         }
         match self.step {
-            WizardStep::DeploymentSelect => self.key_deployment(key),
+            WizardStep::StartSelect => self.key_start(key),
+            WizardStep::LoadPath => self.key_load_path(key),
             WizardStep::ComponentsSelect => self.key_components(key),
             WizardStep::Interfaces => self.key_interfaces(key),
             WizardStep::Elasticsearch => self.key_elasticsearch(key),
@@ -203,19 +271,49 @@ impl App {
         }
     }
 
-    fn key_deployment(&mut self, key: KeyEvent) {
+    /// Screens where typing occurs (so plain 'e' is a character, not the editor).
+    fn screen_is_text_input(&self) -> bool {
+        match self.step {
+            WizardStep::LoadPath
+            | WizardStep::Elasticsearch
+            | WizardStep::S2sPassword
+            | WizardStep::WiseUrl => true,
+            WizardStep::Interfaces => self.interface_advanced,
+            WizardStep::Plugins => self.plugin_advanced,
+            _ => false,
+        }
+    }
+
+    fn available_modes(&self) -> Vec<StartMode> {
+        StartMode::available(self.platform.os)
+    }
+
+    fn key_start(&mut self, key: KeyEvent) {
+        let modes = self.available_modes();
+        let n = modes.len();
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => self.cursor = 0,
-            KeyCode::Down | KeyCode::Char('j') => self.cursor = 1,
+            KeyCode::Up | KeyCode::Char('k') => self.cursor = (self.cursor + n - 1) % n,
+            KeyCode::Down | KeyCode::Char('j') => self.cursor = (self.cursor + 1) % n,
             KeyCode::Enter => {
-                self.deployment = Some(if self.cursor == 0 {
-                    Deployment::Native
-                } else {
-                    Deployment::Docker
-                });
+                let mode = modes[self.cursor];
+                self.start_mode = Some(mode);
+                self.deployment = Some(mode.deployment());
+                self.is_load = mode.is_load();
                 self.advance();
             }
             _ => {}
+        }
+    }
+
+    fn key_load_path(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter => match self.load_from_path() {
+                Ok(()) => self.advance(),
+                Err(e) => self.error = Some(format!("Load failed: {e}")),
+            },
+            _ => {
+                self.fields.load_path.handle_event(&Event::Key(key));
+            }
         }
     }
 
@@ -474,37 +572,335 @@ impl App {
         }
     }
 
-    /// Execute the side-effecting apply for the chosen deployment.
-    fn run_apply(&mut self) {
-        let ops = RealOps;
-        self.log = match self.deployment {
-            Some(Deployment::Docker) => {
-                let generated = docker::generate(
-                    &self.components,
-                    &self.answers,
-                    &self.docker_mounts,
-                    &Images::default(),
-                    self.basic_auth,
-                );
-                let out_dir = std::env::current_dir().unwrap_or_else(|_| ".".into());
-                docker::apply(&ops, &out_dir, &generated)
+    // --- documents -------------------------------------------------------
+
+    /// Reconcile the document set to the current deployment/components and
+    /// re-merge understood fields into each (preserving unknown content).
+    fn sync_docs(&mut self) {
+        let dep = match self.deployment {
+            Some(d) => d,
+            None => return,
+        };
+        let desired = self.desired_doc_kinds(dep);
+
+        // New mode: drop docs no longer wanted. Load mode: keep loaded docs.
+        if !self.is_load {
+            self.docs.retain(|d| desired.contains(&d.kind));
+        }
+        for kind in &desired {
+            if !self.docs.iter().any(|d| d.kind == *kind) {
+                let (path, base) = self.new_doc(*kind);
+                self.docs.push(Document {
+                    kind: *kind,
+                    path,
+                    text: base,
+                });
             }
-            // Native writes system config and manages services — needs root.
-            _ if !self.is_root => vec![LogLine::new(
+        }
+
+        // Re-merge understood fields (locals avoid borrowing self twice).
+        let answers = self.answers.clone();
+        let components = self.components;
+        let mounts = self.docker_mounts;
+        let ba = self.basic_auth;
+        let images = Images::default();
+        for d in &mut self.docs {
+            d.text = match d.kind {
+                DocKind::Compose => {
+                    docset::render_compose(&d.text, &components, &answers, &mounts, &images)
+                }
+                DocKind::Env => docset::render_env(&d.text, &answers, ba),
+                ini => docset::render_ini(ini, &d.text, &answers, ba),
+            };
+        }
+    }
+
+    fn desired_doc_kinds(&self, dep: Deployment) -> Vec<DocKind> {
+        match dep {
+            Deployment::Docker => vec![DocKind::Compose, DocKind::Env],
+            Deployment::Native => {
+                let mut v = Vec::new();
+                if self.components.capture || self.components.viewer {
+                    v.push(DocKind::ConfigIni);
+                }
+                if self.components.wise {
+                    v.push(DocKind::WiseIni);
+                }
+                if self.components.cont3xt {
+                    v.push(DocKind::Cont3xtIni);
+                }
+                v
+            }
+        }
+    }
+
+    fn new_doc(&self, kind: DocKind) -> (PathBuf, String) {
+        match kind {
+            DocKind::Compose | DocKind::Env => (self.out_dir.join(kind.filename()), String::new()),
+            ini => {
+                let etc = self.build.etc_dir();
+                let install = self.build.install_dir.to_string_lossy();
+                let base = docset::fresh_ini_base(ini, &etc, &install);
+                (etc.join(kind.filename()), base)
+            }
+        }
+    }
+
+    // --- load ------------------------------------------------------------
+
+    /// Read the file(s) at the load path into documents and prefill the wizard.
+    fn load_from_path(&mut self) -> std::io::Result<()> {
+        let raw = self.fields.load_path.value().trim().to_string();
+        let path = PathBuf::from(&raw);
+        self.docs.clear();
+
+        match self.deployment {
+            Some(Deployment::Docker) => {
+                let text = std::fs::read_to_string(&path)?;
+                self.out_dir = path
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| PathBuf::from("."));
+                docset::parse_compose(
+                    &text,
+                    &mut self.components,
+                    &mut self.answers,
+                    &mut self.docker_mounts,
+                );
+                self.docs.push(Document {
+                    kind: DocKind::Compose,
+                    path: path.clone(),
+                    text,
+                });
+                // Sibling env file, if present.
+                let env_path = self.out_dir.join(DocKind::Env.filename());
+                let env_text = std::fs::read_to_string(&env_path).unwrap_or_default();
+                docset::parse_env(&env_text, &mut self.answers);
+                self.docs.push(Document {
+                    kind: DocKind::Env,
+                    path: env_path,
+                    text: env_text,
+                });
+            }
+            _ => {
+                // Native: treat the path as the etc dir (or a file's dir).
+                let dir = if path.is_dir() {
+                    path.clone()
+                } else {
+                    path.parent()
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or(path.clone())
+                };
+                let mut any = false;
+                for (kind, comp) in [
+                    (DocKind::ConfigIni, None),
+                    (DocKind::WiseIni, Some(Component::Wise)),
+                    (DocKind::Cont3xtIni, Some(Component::Cont3xt)),
+                ] {
+                    let p = dir.join(kind.filename());
+                    if let Ok(text) = std::fs::read_to_string(&p) {
+                        any = true;
+                        docset::parse_ini(kind, &text, &mut self.answers);
+                        if kind == DocKind::ConfigIni {
+                            self.components.capture = true;
+                            self.components.viewer = true;
+                        }
+                        if let Some(c) = comp {
+                            if !self.components.contains(c) {
+                                self.components.toggle(c);
+                            }
+                        }
+                        self.docs.push(Document {
+                            kind,
+                            path: p,
+                            text,
+                        });
+                    }
+                }
+                if !any {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("no ini files found in {}", dir.display()),
+                    ));
+                }
+            }
+        }
+        self.sync_fields_from_answers();
+        Ok(())
+    }
+
+    /// Push understood answer values back into the editable input fields and
+    /// checkbox state (after a load or an editor edit).
+    fn sync_fields_from_answers(&mut self) {
+        self.fields.es_url = Input::new(self.answers.elasticsearch_or_default().to_string());
+        self.fields.es_user = Input::new(self.answers.es_user.clone());
+        self.fields.es_password = Input::new(self.answers.es_password.clone());
+        self.fields.s2s = Input::new(self.answers.s2s_password.clone());
+        self.fields.plugins = Input::new(self.answers.plugins.clone());
+        if !self.answers.wise_url.is_empty() {
+            self.fields.wise_url = Input::new(self.answers.wise_url.clone());
+        }
+        self.fields.interface = Input::new(self.answers.interfaces.clone());
+
+        // Interface checkboxes: check detected NICs present in the answer; if the
+        // answer names something we didn't detect, fall back to advanced.
+        let wanted: Vec<&str> = self.answers.interfaces.split(';').map(str::trim).collect();
+        for (i, name) in self.detected_interfaces.iter().enumerate() {
+            self.interface_checked[i] = wanted.contains(&name.as_str());
+        }
+        if !self.answers.interfaces.is_empty()
+            && wanted
+                .iter()
+                .any(|w| !w.is_empty() && !self.detected_interfaces.iter().any(|d| d == w))
+        {
+            self.interface_advanced = true;
+        }
+
+        // Plugin checkboxes similarly.
+        let plugs: Vec<&str> = self.answers.plugins.split(';').map(str::trim).collect();
+        for (i, name) in plugins::KNOWN_PLUGINS.iter().enumerate() {
+            self.plugin_checked[i] = plugs.contains(name);
+        }
+        if !self.answers.plugins.is_empty()
+            && plugs
+                .iter()
+                .any(|p| !p.is_empty() && !plugins::KNOWN_PLUGINS.contains(p))
+        {
+            self.plugin_advanced = true;
+        }
+    }
+
+    // --- editor ----------------------------------------------------------
+
+    pub fn open_editor(&mut self) {
+        self.sync_docs();
+        if self.docs.is_empty() {
+            self.error = Some("No files to edit yet.".into());
+            return;
+        }
+        let areas = self
+            .docs
+            .iter()
+            .map(|d| TextArea::from(d.text.lines().collect::<Vec<_>>()))
+            .collect();
+        self.editor = Some(Editor { tab: 0, areas });
+    }
+
+    fn editor_key(&mut self, key: KeyEvent) {
+        let ed = self.editor.as_mut().unwrap();
+        let n = ed.areas.len();
+        let ctrl_e =
+            key.code == KeyCode::Char('e') && key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Esc => self.close_editor(),
+            _ if ctrl_e => self.close_editor(),
+            KeyCode::Tab => ed.tab = (ed.tab + 1) % n,
+            KeyCode::BackTab => ed.tab = (ed.tab + n - 1) % n,
+            _ => {
+                ed.areas[ed.tab].input(key);
+            }
+        }
+    }
+
+    /// Commit editor buffers back into the documents, then re-parse understood
+    /// fields into the wizard (two-way sync, last write wins).
+    fn close_editor(&mut self) {
+        if let Some(ed) = self.editor.take() {
+            for (d, area) in self.docs.iter_mut().zip(ed.areas.iter()) {
+                d.text = area.lines().join("\n");
+                if !d.text.ends_with('\n') {
+                    d.text.push('\n');
+                }
+            }
+            // Parse understood fields back out of the (possibly edited) docs.
+            let mut components = self.components;
+            for d in &self.docs {
+                match d.kind {
+                    DocKind::Compose => docset::parse_compose(
+                        &d.text,
+                        &mut components,
+                        &mut self.answers,
+                        &mut self.docker_mounts,
+                    ),
+                    DocKind::Env => docset::parse_env(&d.text, &mut self.answers),
+                    ini => docset::parse_ini(ini, &d.text, &mut self.answers),
+                }
+            }
+            self.components = components;
+            self.sync_fields_from_answers();
+            self.sync_docs();
+        }
+    }
+
+    // --- apply -----------------------------------------------------------
+
+    /// Write the in-memory documents to disk and run native system actions.
+    fn run_apply(&mut self) {
+        self.sync_docs();
+        let ops = RealOps;
+        let mut log = Vec::new();
+
+        // Native writes system config + manages services — needs root.
+        if self.deployment == Some(Deployment::Native) && !self.is_root {
+            self.log = vec![LogLine::new(
                 crate::log::Level::Error,
                 "Native setup must run as root. Re-run with sudo, or go back and \
                  choose Docker (which needs no root)."
                     .into(),
-            )],
-            _ => native::apply(
-                &ops,
-                &self.build,
-                self.platform,
-                &self.components,
-                &self.answers,
-                self.basic_auth,
-            ),
-        };
+            )];
+            self.applied = true;
+            return;
+        }
+
+        // Write every document. Load mode overwrites; new mode won't clobber.
+        use crate::actions::system::SystemOps;
+        for d in &self.docs {
+            let mode = if matches!(d.kind, DocKind::Env) {
+                0o600
+            } else {
+                0o644
+            };
+            let outcome = if self.is_load {
+                ops.write_file(&d.path, &d.text, mode).map(|_| false)
+            } else {
+                ops.write_new(&d.path, &d.text)
+            };
+            match outcome {
+                Ok(true) => log.push(LogLine::new(
+                    crate::log::Level::Info,
+                    format!("Kept existing {}", d.path.display()),
+                )),
+                Ok(false) => log.push(LogLine::new(
+                    crate::log::Level::Info,
+                    format!("Wrote {}", d.path.display()),
+                )),
+                Err(e) => log.push(LogLine::new(
+                    crate::log::Level::Error,
+                    format!("writing {}: {e}", d.path.display()),
+                )),
+            }
+        }
+
+        match self.deployment {
+            Some(Deployment::Docker) => {
+                log.push(LogLine::new(
+                    crate::log::Level::Info,
+                    format!("Run `docker compose up -d` from {}", self.out_dir.display()),
+                ));
+            }
+            _ => {
+                native::system_actions(
+                    &ops,
+                    &self.build,
+                    self.platform,
+                    &self.components,
+                    &self.answers,
+                    &mut log,
+                );
+            }
+        }
+
+        self.log = log;
         self.applied = true;
     }
 }
@@ -554,9 +950,11 @@ mod tests {
     fn native_capture_viewer_drives_to_review_with_answers() {
         let mut a = app();
         a.on_enter_step();
-        // Deployment: Native (cursor 0) -> Enter.
+        // Start: "Run on machine — create new" (index 2 on Linux) -> Enter.
+        a.cursor = 2;
         press(&mut a, KeyCode::Enter);
         assert_eq!(a.deployment, Some(Deployment::Native));
+        assert!(!a.is_load);
         assert_eq!(a.step, WizardStep::ComponentsSelect);
 
         // Components: toggle capture (cursor 0) + viewer (cursor 1).
@@ -652,7 +1050,7 @@ mod tests {
     fn components_requires_at_least_one() {
         let mut a = app();
         a.on_enter_step();
-        press(&mut a, KeyCode::Enter); // deployment -> components
+        press(&mut a, KeyCode::Enter); // start (Docker new) -> components
         press(&mut a, KeyCode::Enter); // no components selected
         assert_eq!(a.step, WizardStep::ComponentsSelect);
         assert!(a.error.is_some());
@@ -662,7 +1060,7 @@ mod tests {
     fn docker_wise_only_skips_interface_and_geoip_steps() {
         let mut a = app();
         a.on_enter_step();
-        press(&mut a, KeyCode::Down); // deployment cursor -> Docker
+        a.cursor = 0; // Docker — create new
         press(&mut a, KeyCode::Enter);
         assert_eq!(a.deployment, Some(Deployment::Docker));
 
@@ -780,5 +1178,64 @@ mod tests {
         press(&mut a, KeyCode::Char(' '));
         let etc = crate::domain::MountKind::Etc;
         assert!(!a.docker_mounts.is_enabled(etc));
+    }
+
+    #[test]
+    fn editor_edit_syncs_back_into_wizard() {
+        let mut a = app();
+        a.deployment = Some(Deployment::Docker);
+        a.components = Components {
+            capture: true,
+            ..Default::default()
+        };
+        a.open_editor();
+        let env_idx = a.docs.iter().position(|d| d.kind == DocKind::Env).unwrap();
+        // Hand-edit the env file in the editor.
+        a.editor.as_mut().unwrap().areas[env_idx] = TextArea::new(vec![
+            "ARKIME__interface=zzz9".to_string(),
+            "ARKIME__passwordSecret=fromedit".to_string(),
+            "MY_UNKNOWN=keep".to_string(),
+        ]);
+        a.close_editor();
+
+        // Edits flowed back into the wizard...
+        assert_eq!(a.answers.interfaces, "zzz9");
+        assert_eq!(a.answers.s2s_password, "fromedit");
+        // ...and the unknown var is preserved in the re-synced document.
+        let env = a.docs.iter().find(|d| d.kind == DocKind::Env).unwrap();
+        assert!(env.text.contains("MY_UNKNOWN=keep"));
+    }
+
+    #[test]
+    fn native_load_prefills_and_preserves_unknown() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("config.ini"),
+            "interface=eth7\nelasticsearch=https://loaded:9200\npasswordSecret=loadedpw\ncustomKey=keepme\n",
+        )
+        .unwrap();
+
+        let mut a = app();
+        a.deployment = Some(Deployment::Native);
+        a.is_load = true;
+        a.fields.load_path = Input::new(dir.path().to_string_lossy().to_string());
+        a.load_from_path().unwrap();
+
+        // Prefilled from the file.
+        assert!(a.components.capture && a.components.viewer);
+        assert_eq!(a.answers.interfaces, "eth7");
+        assert_eq!(a.answers.elasticsearch, "https://loaded:9200");
+        assert_eq!(a.answers.s2s_password, "loadedpw");
+
+        // Changing a value and re-syncing preserves the unknown key.
+        a.answers.interfaces = "eth0;eth1".into();
+        a.sync_docs();
+        let cfg = a
+            .docs
+            .iter()
+            .find(|d| d.kind == DocKind::ConfigIni)
+            .unwrap();
+        assert!(cfg.text.contains("customKey=keepme"));
+        assert!(cfg.text.contains("interface=eth0;eth1"));
     }
 }

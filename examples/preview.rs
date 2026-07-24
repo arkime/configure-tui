@@ -2,9 +2,9 @@
 //! so the output can be eyeballed on any platform (the real binary refuses to
 //! run on macOS). `cargo run --example preview`.
 
-use arkime_setup::actions::docker::{generate, Images};
 use arkime_setup::app::App;
 use arkime_setup::config::substitute::BasicAuthEncoding;
+use arkime_setup::docset::{render_compose, render_env, Images};
 use arkime_setup::domain::{
     Answers, BuildConfig, Components, Deployment, MountSelection, Os, Platform, ServiceManagerKind,
 };
@@ -39,6 +39,8 @@ fn main() {
             service_manager: ServiceManagerKind::Systemd,
         },
     );
+    println!("=== Start screen (4 modes) ===\n{}", render(&app));
+
     app.components.capture = true;
     app.components.viewer = true;
     app.step = WizardStep::ComponentsSelect;
@@ -74,18 +76,16 @@ fn main() {
         plugins: "wise.so;ja4plus.amd64.so;entropy.so".into(),
         ..Default::default()
     };
-    let g = generate(
+    let compose = render_compose(
+        "",
         &components,
         &answers,
         &MountSelection::default(),
         &Images::default(),
-        BasicAuthEncoding::Plaintext,
     );
-    println!(
-        "=== docker-compose.yml (docker mode, demo ES) ===\n{}",
-        g.compose_yaml
-    );
-    println!("=== arkime.env ===\n{}", g.env_file);
+    let env = render_env("", &answers, BasicAuthEncoding::Plaintext);
+    println!("=== docker-compose.yml (docker mode, demo ES) ===\n{compose}");
+    println!("=== arkime.env ===\n{env}");
 
     // Plugins screen (wise component forces wise.so on).
     app.components.wise = true;
@@ -105,4 +105,18 @@ fn main() {
     app.cursor = 0;
     app.step = WizardStep::DockerMounts;
     println!("=== Docker mounts screen ===\n{}", render(&app));
+
+    // Editor overlay (file tabs; Tab cycles).
+    app.components = Components {
+        capture: true,
+        viewer: true,
+        ..Default::default()
+    };
+    app.answers.interfaces = "eth0;eth1".into();
+    app.answers.s2s_password = "secret".into();
+    app.open_editor();
+    println!(
+        "=== Editor overlay (docker-compose.yml tab) ===\n{}",
+        render(&app)
+    );
 }
