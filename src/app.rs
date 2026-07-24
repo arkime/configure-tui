@@ -945,7 +945,11 @@ impl App {
             Some(Deployment::Docker) => {
                 log.push(LogLine::new(
                     crate::log::Level::Info,
-                    format!("Run `docker compose up -d` from {}", self.out_dir.display()),
+                    "Files written. Nothing is running yet — start Arkime with:".into(),
+                ));
+                log.push(LogLine::new(
+                    crate::log::Level::Info,
+                    format!("    cd {} && docker compose up -d", self.out_dir.display()),
                 ));
             }
             _ => {
