@@ -1,0 +1,3 @@
+/target
+# Cargo.lock is intentionally committed: this is a binary built into packages,
+# so we want reproducible dependency versions.

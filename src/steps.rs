@@ -1,0 +1,195 @@
+//! The wizard step sequence and its conditional branching.
+//!
+//! `required_steps` is the single source of truth: given the deployment,
+//! component set, and platform, it produces the ordered list of steps to show.
+//! `next`/`prev` simply walk that list, so a disabled component's questions
+//! never appear and there is one place to reason about the flow.
+
+use crate::domain::{Components, Deployment};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WizardStep {
+    /// FIRST screen — Native vs Docker. Everything branches on it.
+    DeploymentSelect,
+    /// Multi-select toggles for capture/viewer/wise/parliament/cont3xt.
+    ComponentsSelect,
+    /// Interfaces to monitor (capture only).
+    Interfaces,
+    /// ES URL/user/password + demo-ES toggle.
+    Elasticsearch,
+    /// S2S / encryption secret.
+    S2sPassword,
+    /// GeoIP download prompt (native + capture only).
+    GeoIp,
+    /// Summary + confirm.
+    Review,
+    /// Applying actions, live log.
+    Progress,
+    /// Terminal state.
+    Done,
+}
+
+/// Compute the ordered steps for the current selections.
+///
+/// `deployment` is `None` only before the first screen is answered; in that
+/// case we still return the full skeleton so `next`/`prev` have something to
+/// walk. Component-dependent steps are filtered once components are known.
+pub fn required_steps(deployment: Option<Deployment>, components: &Components) -> Vec<WizardStep> {
+    let mut steps = vec![WizardStep::DeploymentSelect, WizardStep::ComponentsSelect];
+
+    if components.needs_interfaces() {
+        steps.push(WizardStep::Interfaces);
+    }
+    if components.needs_elasticsearch() {
+        steps.push(WizardStep::Elasticsearch);
+    }
+    if components.needs_s2s_password() {
+        steps.push(WizardStep::S2sPassword);
+    }
+    // GeoIP is a native-only action, and only relevant when capturing.
+    if deployment == Some(Deployment::Native) && components.capture {
+        steps.push(WizardStep::GeoIp);
+    }
+
+    steps.push(WizardStep::Review);
+    steps.push(WizardStep::Progress);
+    steps.push(WizardStep::Done);
+    steps
+}
+
+/// Step after `current`, honoring the active selections. Returns `current` if it
+/// is the last step (defensive; callers normally stop at `Done`).
+pub fn next(
+    current: WizardStep,
+    deployment: Option<Deployment>,
+    components: &Components,
+) -> WizardStep {
+    let steps = required_steps(deployment, components);
+    match steps.iter().position(|&s| s == current) {
+        Some(i) if i + 1 < steps.len() => steps[i + 1],
+        // `current` may not be in the list if selections changed under it; fall
+        // back to the first step at/after it, else stay put.
+        _ => current,
+    }
+}
+
+/// Step before `current`. Returns `current` if it is the first step.
+pub fn prev(
+    current: WizardStep,
+    deployment: Option<Deployment>,
+    components: &Components,
+) -> WizardStep {
+    let steps = required_steps(deployment, components);
+    match steps.iter().position(|&s| s == current) {
+        Some(i) if i > 0 => steps[i - 1],
+        _ => current,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::Components;
+
+    fn caps() -> Components {
+        Components {
+            capture: true,
+            viewer: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn native_capture_viewer_full_flow() {
+        let steps = required_steps(Some(Deployment::Native), &caps());
+        assert_eq!(
+            steps,
+            vec![
+                WizardStep::DeploymentSelect,
+                WizardStep::ComponentsSelect,
+                WizardStep::Interfaces,
+                WizardStep::Elasticsearch,
+                WizardStep::S2sPassword,
+                WizardStep::GeoIp,
+                WizardStep::Review,
+                WizardStep::Progress,
+                WizardStep::Done,
+            ]
+        );
+    }
+
+    #[test]
+    fn docker_skips_geoip() {
+        let steps = required_steps(Some(Deployment::Docker), &caps());
+        assert!(!steps.contains(&WizardStep::GeoIp));
+        assert!(steps.contains(&WizardStep::Interfaces));
+    }
+
+    #[test]
+    fn wise_only_skips_interfaces_and_s2s_and_geoip() {
+        let wise = Components {
+            wise: true,
+            ..Default::default()
+        };
+        let steps = required_steps(Some(Deployment::Native), &wise);
+        assert!(!steps.contains(&WizardStep::Interfaces));
+        assert!(!steps.contains(&WizardStep::S2sPassword));
+        assert!(!steps.contains(&WizardStep::GeoIp));
+        // Wise still needs no ES here (not in needs_elasticsearch set).
+        assert!(!steps.contains(&WizardStep::Elasticsearch));
+    }
+
+    #[test]
+    fn cont3xt_needs_es_and_s2s_but_not_interfaces() {
+        let c = Components {
+            cont3xt: true,
+            ..Default::default()
+        };
+        let steps = required_steps(Some(Deployment::Native), &c);
+        assert!(steps.contains(&WizardStep::Elasticsearch));
+        assert!(steps.contains(&WizardStep::S2sPassword));
+        assert!(!steps.contains(&WizardStep::Interfaces));
+        assert!(!steps.contains(&WizardStep::GeoIp)); // no capture
+    }
+
+    #[test]
+    fn next_and_prev_are_inverse_across_flow() {
+        let d = Some(Deployment::Native);
+        let c = caps();
+        let steps = required_steps(d, &c);
+        for win in steps.windows(2) {
+            assert_eq!(next(win[0], d, &c), win[1]);
+            assert_eq!(prev(win[1], d, &c), win[0]);
+        }
+        // Ends are clamped.
+        assert_eq!(
+            prev(WizardStep::DeploymentSelect, d, &c),
+            WizardStep::DeploymentSelect
+        );
+        assert_eq!(next(WizardStep::Done, d, &c), WizardStep::Done);
+    }
+
+    #[test]
+    fn every_flow_terminates_at_done_via_review() {
+        for dep in [Deployment::Native, Deployment::Docker] {
+            for mask in 1u8..32 {
+                let c = Components {
+                    capture: mask & 1 != 0,
+                    viewer: mask & 2 != 0,
+                    wise: mask & 4 != 0,
+                    parliament: mask & 8 != 0,
+                    cont3xt: mask & 16 != 0,
+                };
+                let steps = required_steps(Some(dep), &c);
+                let review = steps.iter().position(|&s| s == WizardStep::Review).unwrap();
+                let progress = steps
+                    .iter()
+                    .position(|&s| s == WizardStep::Progress)
+                    .unwrap();
+                let done = steps.iter().position(|&s| s == WizardStep::Done).unwrap();
+                assert!(review < progress && progress < done);
+                assert_eq!(*steps.last().unwrap(), WizardStep::Done);
+            }
+        }
+    }
+}
