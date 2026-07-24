@@ -42,9 +42,11 @@ cargo clippy --all-targets -- -D warnings
 cargo run -- --help
 ```
 
-The tool refuses to run on macOS (same as the bash version) and requires root;
-pass `--no-root-check` for a local look on a dev box (note: the macOS refusal
-still applies — run it in a Linux VM/container to drive the UI).
+The tool refuses to run on macOS (same as the bash version); run it in a Linux
+VM/container to drive the UI. **Root is not required to start** — only the
+**native** apply needs it (it writes system config and manages services). Docker
+mode only writes `docker-compose.yml` + `arkime.env` to the current directory
+and needs no privileges; the Review screen warns if you pick native without root.
 
 Runtime overrides:
 

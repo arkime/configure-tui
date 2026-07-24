@@ -63,6 +63,10 @@ pub struct App {
     /// Suggested docker bind-mount toggles.
     pub docker_mounts: MountSelection,
 
+    /// Whether the process is running as root. Native apply needs it; docker
+    /// does not.
+    pub is_root: bool,
+
     pub log: Vec<LogLine>,
     pub applied: bool,
     pub error: Option<String>,
@@ -111,6 +115,7 @@ impl App {
             plugin_checked: vec![false; plugins::KNOWN_PLUGINS.len()],
             plugin_advanced: false,
             docker_mounts: MountSelection::default(),
+            is_root: crate::guards::is_root(),
             log: Vec::new(),
             applied: false,
             error: None,
@@ -484,6 +489,13 @@ impl App {
                 let out_dir = std::env::current_dir().unwrap_or_else(|_| ".".into());
                 docker::apply(&ops, &out_dir, &generated)
             }
+            // Native writes system config and manages services — needs root.
+            _ if !self.is_root => vec![LogLine::new(
+                crate::log::Level::Error,
+                "Native setup must run as root. Re-run with sudo, or go back and \
+                 choose Docker (which needs no root)."
+                    .into(),
+            )],
             _ => native::apply(
                 &ops,
                 &self.build,
@@ -734,6 +746,24 @@ mod tests {
         assert_eq!(a.answers.plugins, "wise.so");
         // Local wise deployment -> no external URL step.
         assert_ne!(a.step, WizardStep::WiseUrl);
+    }
+
+    #[test]
+    fn native_apply_without_root_is_blocked() {
+        let mut a = app();
+        a.deployment = Some(Deployment::Native);
+        a.is_root = false;
+        a.components = Components {
+            capture: true,
+            ..Default::default()
+        };
+        // Returns an error log and touches nothing (early-returns before RealOps).
+        a.run_apply();
+        assert!(a.applied);
+        assert!(a
+            .log
+            .iter()
+            .any(|l| l.level == crate::log::Level::Error && l.text.contains("root")));
     }
 
     #[test]

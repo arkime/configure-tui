@@ -15,13 +15,10 @@ use std::io::stdout;
 
 struct Cli {
     build: BuildConfig,
-    /// Skip the root check — useful for a dry look on a dev box.
-    no_root_check: bool,
 }
 
 fn parse_args() -> Result<Option<Cli>> {
     let mut build = BuildConfig::defaults();
-    let mut no_root_check = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -45,14 +42,10 @@ fn parse_args() -> Result<Option<Cli>> {
                     .ok_or_else(|| anyhow::anyhow!("--name needs a value"))?;
                 build.name = v;
             }
-            "--no-root-check" => no_root_check = true,
             other => anyhow::bail!("unknown argument: {other} (try --help)"),
         }
     }
-    Ok(Some(Cli {
-        build,
-        no_root_check,
-    }))
+    Ok(Some(Cli { build }))
 }
 
 fn print_help() {
@@ -62,9 +55,10 @@ fn print_help() {
          OPTIONS:\n\
          \x20   --install-dir <PATH>   Override the install dir (default /opt/arkime)\n\
          \x20   --name <NAME>          Override the product name (default arkime)\n\
-         \x20   --no-root-check        Do not require root (dev only)\n\
          \x20   -h, --help             Show this help\n\
-         \x20   -V, --version          Show version"
+         \x20   -V, --version          Show version\n\n\
+         Native mode requires root (it writes system config and manages\n\
+         services); docker mode only writes compose/env files and does not."
     );
 }
 
@@ -74,7 +68,7 @@ fn main() -> Result<()> {
         None => return Ok(()),
     };
 
-    let platform = match guards::preflight(!cli.no_root_check) {
+    let platform = match guards::preflight() {
         GuardOutcome::Ok(p) => p,
         GuardOutcome::Refuse(msg) => {
             eprintln!("{msg}");

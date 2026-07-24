@@ -430,6 +430,14 @@ fn render_review(app: &App, f: &mut Frame, area: Rect) {
         };
         lines.push(kv("Mounts", &text));
     }
+    // Native apply needs root; warn before the user tries.
+    if app.deployment == Some(Deployment::Native) && !app.is_root {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "⚠ Native setup requires root — re-run with sudo, or pick Docker.",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )));
+    }
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
 
