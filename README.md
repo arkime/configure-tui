@@ -32,8 +32,9 @@ dependencies, so it can be produced once and pulled into the rpm/deb packages.
    only; suggested host bind mounts, toggleable).
 5. **Review** → **Apply** → live progress log.
 
-Navigation: **Enter** advances, **Esc** goes back (or quits on the first
-screen).
+Navigation: **Enter** / **→** advance, **Esc** / **←** go back (or quit on the
+first screen). On typing screens `←/→` move the field cursor instead, so use
+`Enter`/`Esc` there.
 
 ### In-memory documents & the `^E` editor
 

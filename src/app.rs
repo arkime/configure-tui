@@ -241,19 +241,44 @@ impl App {
             self.open_editor();
             return;
         }
-        // Esc = back a screen (or quit on the first screen / after apply).
+        // Esc always goes back a screen (quit on the first screen / after apply).
         if key.code == KeyCode::Esc {
-            match self.step {
-                WizardStep::StartSelect => self.should_quit = true,
-                WizardStep::Progress | WizardStep::Done => {
-                    if self.applied {
-                        self.should_quit = true;
-                    }
-                }
-                _ => self.retreat(),
-            }
+            self.back();
             return;
         }
+        // On non-typing screens, Left/Right also navigate (← back, → forward).
+        // On typing screens they move the field cursor instead.
+        if !self.screen_is_text_input() {
+            match key.code {
+                KeyCode::Left => {
+                    self.back();
+                    return;
+                }
+                KeyCode::Right => {
+                    self.dispatch(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                    return;
+                }
+                _ => {}
+            }
+        }
+        self.dispatch(key);
+    }
+
+    /// Go back one screen (or quit on the first screen / after apply).
+    fn back(&mut self) {
+        match self.step {
+            WizardStep::StartSelect => self.should_quit = true,
+            WizardStep::Progress | WizardStep::Done => {
+                if self.applied {
+                    self.should_quit = true;
+                }
+            }
+            _ => self.retreat(),
+        }
+    }
+
+    /// Route a key to the active screen's handler.
+    fn dispatch(&mut self, key: KeyEvent) {
         match self.step {
             WizardStep::StartSelect => self.key_start(key),
             WizardStep::LoadPath => self.key_load_path(key),
@@ -481,7 +506,6 @@ impl App {
                 self.answers.wise_url = self.fields.wise_url.value().trim().to_string();
                 self.advance();
             }
-            KeyCode::Left => self.retreat(),
             _ => {
                 self.fields.wise_url.handle_event(&Event::Key(key));
             }
@@ -520,7 +544,6 @@ impl App {
         match key.code {
             KeyCode::Up => self.es_focus = self.es_focus.saturating_sub(1),
             KeyCode::Down | KeyCode::Tab => self.es_focus = (self.es_focus + 1).min(3),
-            KeyCode::Left => self.retreat(),
             KeyCode::Char(' ') if self.es_focus == 3 => {
                 self.answers.install_demo_es = !self.answers.install_demo_es;
             }
@@ -550,7 +573,6 @@ impl App {
                     self.advance();
                 }
             }
-            KeyCode::Left => self.retreat(),
             _ => {
                 self.active_input().handle_event(&Event::Key(key));
             }
@@ -1057,6 +1079,30 @@ mod tests {
         typ(&mut a, ";bond0");
         press(&mut a, KeyCode::Enter);
         assert_eq!(a.answers.interfaces, "eth0;bond0");
+    }
+
+    #[test]
+    fn arrows_navigate_on_non_typing_screens() {
+        let mut a = app();
+        a.on_enter_step();
+        a.cursor = 0; // Docker — create new
+                      // Right = forward (same as Enter).
+        press(&mut a, KeyCode::Right);
+        assert_eq!(a.deployment, Some(Deployment::Docker));
+        assert_eq!(a.step, WizardStep::ComponentsSelect);
+        // Left = back.
+        press(&mut a, KeyCode::Left);
+        assert_eq!(a.step, WizardStep::StartSelect);
+    }
+
+    #[test]
+    fn arrows_do_not_navigate_while_typing() {
+        let mut a = app();
+        a.step = WizardStep::S2sPassword;
+        typ(&mut a, "abc");
+        // Left moves the field cursor, it does NOT go back a screen.
+        press(&mut a, KeyCode::Left);
+        assert_eq!(a.step, WizardStep::S2sPassword);
     }
 
     #[test]

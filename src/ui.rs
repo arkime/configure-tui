@@ -530,14 +530,14 @@ fn render_footer(app: &App, f: &mut Frame, area: Rect) {
         " · ^E edit files"
     };
     let help = match app.step {
-        WizardStep::StartSelect => "↑↓ choose · Enter select · Esc quit",
+        WizardStep::StartSelect => "↑↓ choose · →/Enter select · Esc quit",
         WizardStep::LoadPath => "type path · Enter load · Esc back",
-        WizardStep::ComponentsSelect => "↑↓ move · space toggle · Enter next · Esc back",
+        WizardStep::ComponentsSelect => "↑↓ move · space toggle · →/Enter next · ←/Esc back",
         WizardStep::Interfaces => {
             if app.interface_advanced {
                 "type · Tab checkboxes · Enter next · Esc back"
             } else {
-                "↑↓ move · space toggle · a advanced · Enter next · Esc back"
+                "↑↓ move · space toggle · a advanced · →/Enter next · ←/Esc back"
             }
         }
         WizardStep::S2sPassword => "type · Enter next · Esc back",
@@ -545,7 +545,7 @@ fn render_footer(app: &App, f: &mut Frame, area: Rect) {
             if app.plugin_advanced {
                 "type · Tab checkboxes · Enter next · Esc back"
             } else {
-                "↑↓ move · space toggle · a custom · Enter next · Esc back"
+                "↑↓ move · space toggle · a custom · →/Enter next · ←/Esc back"
             }
         }
         WizardStep::WiseUrl => "type · Enter next · Esc back",
@@ -553,8 +553,8 @@ fn render_footer(app: &App, f: &mut Frame, area: Rect) {
             "↑↓ row · type host path · space toggle · Enter next · Esc back"
         }
         WizardStep::Elasticsearch => "Tab/↑↓ field · type · space (demo) · Enter next · Esc back",
-        WizardStep::GeoIp => "y/n · Enter next · Esc back",
-        WizardStep::Review => "Enter apply · Esc back",
+        WizardStep::GeoIp => "y/n · →/Enter next · ←/Esc back",
+        WizardStep::Review => "→/Enter apply · ←/Esc back",
         WizardStep::Progress => {
             if app.applied {
                 "Enter/Esc exit"
