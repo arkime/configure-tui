@@ -22,6 +22,8 @@ pub struct Answers {
     pub es_data_dir: String,
     /// Whether to download GeoIP files (native mode only).
     pub download_geoip: bool,
+    /// Whether the viewer should allow PCAP uploads (sets `uploadCommand`).
+    pub enable_uploads: bool,
     /// `;`-separated capture plugin list (already finalized, incl. wise.so when
     /// the wise component is enabled). Empty means none.
     pub plugins: String,
@@ -43,6 +45,11 @@ impl Answers {
     /// URL the arkime containers use to reach the single-node ES (host net,
     /// security disabled).
     pub const SINGLE_NODE_ES_URL: &'static str = "http://localhost:9200";
+
+    /// The viewer `uploadCommand` enabled when the user opts into uploads. The
+    /// `{NODE}`/`{TMPFILE}`/`{TAGS}` placeholders are substituted by Arkime.
+    pub const UPLOAD_COMMAND: &'static str =
+        "/opt/arkime/bin/capture --copy -n {NODE} -r {TMPFILE} {TAGS}";
 
     pub fn has_es_user(&self) -> bool {
         !self.es_user.is_empty()

@@ -66,6 +66,7 @@ fn step_title(step: WizardStep) -> &'static str {
         WizardStep::Interfaces => "Interfaces",
         WizardStep::Elasticsearch => "OpenSearch / Elasticsearch",
         WizardStep::S2sPassword => "Encryption password",
+        WizardStep::ViewerUploads => "Viewer uploads",
         WizardStep::Plugins => "Capture plugins",
         WizardStep::WiseUrl => "WISE URL",
         WizardStep::DockerMounts => "Docker mounts",
@@ -87,6 +88,7 @@ fn render_body(app: &App, f: &mut Frame, area: Rect) {
         WizardStep::Interfaces => render_interfaces(app, f, inner),
         WizardStep::Elasticsearch => render_elasticsearch(app, f, inner),
         WizardStep::S2sPassword => render_s2s(app, f, inner),
+        WizardStep::ViewerUploads => render_viewer_uploads(app, f, inner),
         WizardStep::Plugins => render_plugins(app, f, inner),
         WizardStep::WiseUrl => render_wise_url(app, f, inner),
         WizardStep::DockerMounts => render_docker_mounts(app, f, inner),
@@ -393,6 +395,34 @@ fn render_docker_mounts(app: &App, f: &mut Frame, area: Rect) {
     f.render_widget(Paragraph::new(lines), area);
 }
 
+fn render_viewer_uploads(app: &App, f: &mut Frame, area: Rect) {
+    let choice = if app.answers.enable_uploads {
+        "yes"
+    } else {
+        "no"
+    };
+    let lines = vec![
+        Line::from("Allow PCAP uploads through the viewer UI?"),
+        Line::from(Span::styled(
+            "Sets uploadCommand so operators can upload capture files.",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("Choice: "),
+            Span::styled(
+                choice,
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "   (y/n or space to toggle)",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]),
+    ];
+    f.render_widget(Paragraph::new(lines), area);
+}
+
 fn render_geoip(app: &App, f: &mut Frame, area: Rect) {
     let choice = if app.answers.download_geoip {
         "yes"
@@ -469,6 +499,16 @@ fn render_review(app: &App, f: &mut Frame, area: Rect) {
     }
     if app.components.needs_s2s_password() {
         lines.push(kv("Encryption pw", &mask(&app.answers.s2s_password)));
+    }
+    if app.components.viewer {
+        lines.push(kv(
+            "Viewer uploads",
+            if app.answers.enable_uploads {
+                "yes"
+            } else {
+                "no"
+            },
+        ));
     }
     if app.components.capture {
         let plugins = if app.answers.plugins.is_empty() {
@@ -579,6 +619,7 @@ fn render_footer(app: &App, f: &mut Frame, area: Rect) {
             "↑↓ row · type host path · space toggle · Enter next · Esc back"
         }
         WizardStep::Elasticsearch => "Tab/↑↓ field · type · space (demo) · Enter next · Esc back",
+        WizardStep::ViewerUploads => "y/n · →/Enter next · ←/Esc back",
         WizardStep::GeoIp => "y/n · →/Enter next · ←/Esc back",
         WizardStep::Review => "→/Enter apply · ←/Esc back",
         WizardStep::Progress => {

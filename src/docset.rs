@@ -121,6 +121,9 @@ pub fn render_ini(
             if !answers.wise_url.is_empty() {
                 t = set_ini_key(&t, "wiseURL", &answers.wise_url);
             }
+            if answers.enable_uploads {
+                t = set_ini_key(&t, "uploadCommand", Answers::UPLOAD_COMMAND);
+            }
             if let Some(a) = &auth {
                 t = set_ini_key(&t, "elasticsearchBasicAuth", a);
             }
@@ -155,6 +158,7 @@ pub fn parse_ini(kind: DocKind, text: &str, answers: &mut Answers) {
         if let Some(v) = get_ini_key(text, "wiseURL") {
             answers.wise_url = v;
         }
+        answers.enable_uploads = get_ini_key(text, "uploadCommand").is_some();
     }
     if let Some(v) = get_ini_key(text, "elasticsearch") {
         answers.elasticsearch = v;
@@ -177,10 +181,14 @@ pub fn parse_ini(kind: DocKind, text: &str, answers: &mut Answers) {
 /// A getter that produces an env var's value from the answers (or None to omit).
 type EnvGetter = fn(&Answers, BasicAuthEncoding) -> Option<String>;
 
-fn env_pairs() -> [(&'static str, EnvGetter); 7] {
+fn env_pairs() -> [(&'static str, EnvGetter); 8] {
     [
         // Always drop privileges to `nobody` in the containers.
         ("ARKIME__dropUser", |_, _| Some("nobody".to_string())),
+        ("ARKIME__uploadCommand", |a, _| {
+            a.enable_uploads
+                .then(|| Answers::UPLOAD_COMMAND.to_string())
+        }),
         ("ARKIME__interface", |a, _| {
             (!a.interfaces.is_empty()).then(|| a.interfaces.clone())
         }),
@@ -234,6 +242,7 @@ pub fn parse_env(text: &str, answers: &mut Answers) {
     if let Some(v) = get_env_key(text, "ARKIME__wiseURL") {
         answers.wise_url = v;
     }
+    answers.enable_uploads = get_env_key(text, "ARKIME__uploadCommand").is_some();
     if let Some(v) = get_env_key(text, "ARKIME__elasticsearchBasicAuth") {
         if let Some((user, pass)) = v.split_once(':') {
             answers.es_user = user.to_string();
@@ -572,6 +581,26 @@ mod tests {
         assert_eq!(a.es_user, "u");
         assert_eq!(a.es_password, "p");
         assert_eq!(a.plugins, "entropy.so");
+    }
+
+    #[test]
+    fn uploads_toggle_sets_upload_command() {
+        let mut a = answers();
+        a.enable_uploads = true;
+        let env = render_env("", &a, BasicAuthEncoding::Plaintext);
+        assert!(env.contains(
+            "ARKIME__uploadCommand=/opt/arkime/bin/capture --copy -n {NODE} -r {TMPFILE} {TAGS}"
+        ));
+        let ini = render_ini(
+            DocKind::ConfigIni,
+            "passwordSecret=x\n",
+            &a,
+            BasicAuthEncoding::Plaintext,
+        );
+        assert!(ini.contains("uploadCommand=/opt/arkime/bin/capture"));
+
+        a.enable_uploads = false;
+        assert!(!render_env("", &a, BasicAuthEncoding::Plaintext).contains("uploadCommand"));
     }
 
     #[test]

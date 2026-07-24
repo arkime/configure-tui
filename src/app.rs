@@ -288,6 +288,7 @@ impl App {
             WizardStep::Interfaces => self.key_interfaces(key),
             WizardStep::Elasticsearch => self.key_elasticsearch(key),
             WizardStep::S2sPassword => self.key_s2s(key),
+            WizardStep::ViewerUploads => self.key_viewer_uploads(key),
             WizardStep::Plugins => self.key_plugins(key),
             WizardStep::WiseUrl => self.key_wise_url(key),
             WizardStep::DockerMounts => self.key_docker_mounts(key),
@@ -601,7 +602,16 @@ impl App {
             KeyCode::Char('n') | KeyCode::Char('N') => self.answers.download_geoip = false,
             KeyCode::Char(' ') => self.answers.download_geoip = !self.answers.download_geoip,
             KeyCode::Enter => self.advance(),
-            KeyCode::Left => self.retreat(),
+            _ => {}
+        }
+    }
+
+    fn key_viewer_uploads(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => self.answers.enable_uploads = true,
+            KeyCode::Char('n') | KeyCode::Char('N') => self.answers.enable_uploads = false,
+            KeyCode::Char(' ') => self.answers.enable_uploads = !self.answers.enable_uploads,
+            KeyCode::Enter => self.advance(),
             _ => {}
         }
     }
@@ -1042,6 +1052,12 @@ mod tests {
         typ(&mut a, "s3cret");
         press(&mut a, KeyCode::Enter);
         assert_eq!(a.answers.s2s_password, "s3cret");
+        assert_eq!(a.step, WizardStep::ViewerUploads);
+
+        // Viewer uploads: enable, then proceed.
+        press(&mut a, KeyCode::Char('y'));
+        press(&mut a, KeyCode::Enter);
+        assert!(a.answers.enable_uploads);
         assert_eq!(a.step, WizardStep::Plugins);
 
         // Plugins: leave none selected, proceed.
