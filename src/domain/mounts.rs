@@ -1,6 +1,6 @@
-//! Suggested host→container bind mounts offered in Docker mode. Each is
-//! toggleable in the wizard (defaulting on) and, when enabled, attached to the
-//! relevant component services in the generated `docker-compose.yml`.
+//! Host→container bind mounts offered in Docker mode. Each mount can be toggled
+//! on/off and its **host path edited**; the container path is fixed (that's the
+//! part we understand). Custom host paths round-trip when loading a compose.
 
 use crate::domain::{Component, Components};
 
@@ -28,15 +28,27 @@ impl MountKind {
         self as usize
     }
 
-    pub fn host(self) -> &'static str {
+    /// Short label for the row (what this mount is for).
+    pub fn label(self) -> &'static str {
+        match self {
+            MountKind::Etc => "etc",
+            MountKind::Pcap => "raw",
+            MountKind::GeoIpData => "geoip",
+            MountKind::GeoIpConf => "geoip.conf",
+        }
+    }
+
+    /// Default host path (editable in the wizard).
+    pub fn default_host(self) -> &'static str {
         match self {
             MountKind::Etc => "/arkime/etc",
-            MountKind::Pcap => "/arkime/pcap",
+            MountKind::Pcap => "/arkime/raw",
             MountKind::GeoIpData => "/arkime/maxmind",
             MountKind::GeoIpConf => "./GeoIP.conf",
         }
     }
 
+    /// Fixed container path (what we understand — not editable).
     pub fn container(self) -> &'static str {
         match self {
             MountKind::Etc => "/opt/arkime/etc",
@@ -46,17 +58,10 @@ impl MountKind {
         }
     }
 
-    /// `host:container` string for a compose `volumes:` entry.
-    pub fn spec(self) -> String {
-        format!("{}:{}", self.host(), self.container())
-    }
-
     /// Whether this mount is worth offering, given the selected components.
     pub fn relevant(self, components: &Components) -> bool {
         match self {
-            // Every Arkime service reads its config from etc.
             MountKind::Etc => components.any(),
-            // Only capture/viewer touch pcap and geo data.
             MountKind::Pcap | MountKind::GeoIpData | MountKind::GeoIpConf => {
                 components.capture || components.viewer
             }
@@ -72,26 +77,62 @@ impl MountKind {
             }
         }
     }
+
+    /// If `vol` (a `host:container` string) targets this mount's container, pull
+    /// out its host part. Used to round-trip a loaded compose.
+    pub fn host_of(self, vol: &str) -> Option<String> {
+        vol.strip_suffix(self.container())
+            .and_then(|p| p.strip_suffix(':'))
+            .map(|h| h.to_string())
+    }
 }
 
-/// Per-mount enable flags, indexed by `MountKind::index`. All on by default.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MountSelection([bool; 4]);
+/// Per-mount enable flags + editable host paths, indexed by `MountKind::index`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MountSelection {
+    enabled: [bool; 4],
+    hosts: [String; 4],
+}
 
 impl Default for MountSelection {
     fn default() -> Self {
-        MountSelection([true; 4])
+        MountSelection {
+            enabled: [true; 4],
+            hosts: MountKind::ALL.map(|k| k.default_host().to_string()),
+        }
     }
 }
 
 impl MountSelection {
     pub fn is_enabled(&self, kind: MountKind) -> bool {
-        self.0[kind.index()]
+        self.enabled[kind.index()]
+    }
+
+    pub fn set_enabled(&mut self, kind: MountKind, on: bool) {
+        self.enabled[kind.index()] = on;
     }
 
     pub fn toggle(&mut self, kind: MountKind) {
-        let slot = &mut self.0[kind.index()];
+        let slot = &mut self.enabled[kind.index()];
         *slot = !*slot;
+    }
+
+    pub fn host(&self, kind: MountKind) -> &str {
+        &self.hosts[kind.index()]
+    }
+
+    pub fn set_host(&mut self, kind: MountKind, host: String) {
+        self.hosts[kind.index()] = host;
+    }
+
+    /// Mutable host, for inline editing.
+    pub fn host_mut(&mut self, kind: MountKind) -> &mut String {
+        &mut self.hosts[kind.index()]
+    }
+
+    /// The `host:container` spec for a mount (using the current host path).
+    pub fn spec(&self, kind: MountKind) -> String {
+        format!("{}:{}", self.host(kind), kind.container())
     }
 
     /// Relevant mounts for the current components, in display order.
@@ -107,7 +148,7 @@ impl MountSelection {
         MountKind::ALL
             .into_iter()
             .filter(|k| k.relevant(components) && self.is_enabled(*k) && k.attaches_to(component))
-            .map(|k| k.spec())
+            .map(|k| self.spec(k))
             .collect()
     }
 }
@@ -132,11 +173,27 @@ mod tests {
             specs,
             vec![
                 "/arkime/etc:/opt/arkime/etc",
-                "/arkime/pcap:/opt/arkime/raw",
+                "/arkime/raw:/opt/arkime/raw",
                 "/arkime/maxmind:/var/lib/GeoIP",
                 "./GeoIP.conf:/etc/GeoIP.conf",
             ]
         );
+    }
+
+    #[test]
+    fn edited_host_shows_in_spec() {
+        let mut sel = MountSelection::default();
+        sel.set_host(MountKind::Pcap, "/data/pcap".into());
+        assert_eq!(sel.spec(MountKind::Pcap), "/data/pcap:/opt/arkime/raw");
+    }
+
+    #[test]
+    fn host_of_parses_loaded_volume() {
+        assert_eq!(
+            MountKind::Pcap.host_of("/data/pcap:/opt/arkime/raw"),
+            Some("/data/pcap".to_string())
+        );
+        assert_eq!(MountKind::Pcap.host_of("/x:/other"), None);
     }
 
     #[test]
@@ -146,11 +203,6 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(MountSelection::relevant_kinds(&wise), vec![MountKind::Etc]);
-        let sel = MountSelection::default();
-        assert_eq!(
-            sel.specs_for(Component::Wise, &wise),
-            vec!["/arkime/etc:/opt/arkime/etc"]
-        );
     }
 
     #[test]

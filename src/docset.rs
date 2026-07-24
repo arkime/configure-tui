@@ -464,9 +464,11 @@ pub fn parse_compose(
             })
             .unwrap_or_default();
         for kind in MountKind::ALL {
-            let want = vols.iter().any(|v| v == &kind.spec());
-            if mounts.is_enabled(kind) != want {
-                mounts.toggle(kind);
+            if let Some(host) = vols.iter().find_map(|v| kind.host_of(v)) {
+                mounts.set_enabled(kind, true);
+                mounts.set_host(kind, host);
+            } else {
+                mounts.set_enabled(kind, false);
             }
         }
     }

@@ -1,0 +1,59 @@
+services:
+  arkime-capture:
+    image: arkime/arkime:latest
+    command: capture
+    env_file:
+    - arkime.env
+    restart: unless-stopped
+    volumes:
+    - /arkime/etc:/opt/arkime/etc
+    - /arkime/pcap:/opt/arkime/raw
+    - /arkime/maxmind:/var/lib/GeoIP
+    - './GeoIP.conf:/etc/GeoIP.conf'
+    network_mode: host
+    cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  arkime-viewer:
+    image: arkime/arkime:latest
+    command: viewer
+    env_file:
+    - arkime.env
+    restart: unless-stopped
+    volumes:
+    - /arkime/etc:/opt/arkime/etc
+    - /arkime/pcap:/opt/arkime/raw
+    - /arkime/maxmind:/var/lib/GeoIP
+    - './GeoIP.conf:/etc/GeoIP.conf'
+    ports:
+    - '8005:8005'
+  arkime-wise:
+    image: arkime/arkime:latest
+    command: wise
+    env_file:
+    - arkime.env
+    restart: unless-stopped
+    volumes:
+    - /arkime/etc:/opt/arkime/etc
+    ports:
+    - '8081:8081'
+  arkime-parliament:
+    image: arkime/arkime:latest
+    command: parliament
+    env_file:
+    - arkime.env
+    restart: unless-stopped
+    volumes:
+    - /arkime/etc:/opt/arkime/etc
+    ports:
+    - '8008:8008'
+  arkime-cont3xt:
+    image: arkime/arkime:latest
+    command: cont3xt
+    env_file:
+    - arkime.env
+    restart: unless-stopped
+    volumes:
+    - /arkime/etc:/opt/arkime/etc
+    ports:
+    - '3218:3218'

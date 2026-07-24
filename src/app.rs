@@ -277,7 +277,8 @@ impl App {
             WizardStep::LoadPath
             | WizardStep::Elasticsearch
             | WizardStep::S2sPassword
-            | WizardStep::WiseUrl => true,
+            | WizardStep::WiseUrl
+            | WizardStep::DockerMounts => true,
             WizardStep::Interfaces => self.interface_advanced,
             WizardStep::Plugins => self.plugin_advanced,
             _ => false,
@@ -490,14 +491,26 @@ impl App {
     /// Docker mounts screen: toggle the suggested host bind mounts relevant to
     /// the selected components.
     fn key_docker_mounts(&mut self, key: KeyEvent) {
+        // Rows are editable host paths, so ↑↓ (not j/k) move between them and
+        // typed characters edit the focused mount's host path.
         let relevant = MountSelection::relevant_kinds(&self.components);
         let n = relevant.len();
+        if n == 0 {
+            if key.code == KeyCode::Enter {
+                self.advance();
+            }
+            return;
+        }
+        let kind = relevant[self.cursor.min(n - 1)];
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') if n > 0 => self.cursor = (self.cursor + n - 1) % n,
-            KeyCode::Down | KeyCode::Char('j') if n > 0 => self.cursor = (self.cursor + 1) % n,
-            KeyCode::Char(' ') if n > 0 => self.docker_mounts.toggle(relevant[self.cursor]),
+            KeyCode::Up => self.cursor = (self.cursor + n - 1) % n,
+            KeyCode::Down => self.cursor = (self.cursor + 1) % n,
+            KeyCode::Char(' ') => self.docker_mounts.toggle(kind),
+            KeyCode::Char(c) => self.docker_mounts.host_mut(kind).push(c),
+            KeyCode::Backspace => {
+                self.docker_mounts.host_mut(kind).pop();
+            }
             KeyCode::Enter => self.advance(),
-            KeyCode::Left | KeyCode::Backspace => self.retreat(),
             _ => {}
         }
     }
@@ -601,7 +614,7 @@ impl App {
         // Re-merge understood fields (locals avoid borrowing self twice).
         let answers = self.answers.clone();
         let components = self.components;
-        let mounts = self.docker_mounts;
+        let mounts = self.docker_mounts.clone();
         let ba = self.basic_auth;
         let images = Images::default();
         for d in &mut self.docs {
@@ -1178,6 +1191,28 @@ mod tests {
         press(&mut a, KeyCode::Char(' '));
         let etc = crate::domain::MountKind::Etc;
         assert!(!a.docker_mounts.is_enabled(etc));
+    }
+
+    #[test]
+    fn docker_mount_host_is_editable_and_reaches_compose() {
+        let mut a = app();
+        a.deployment = Some(Deployment::Docker);
+        a.components = Components {
+            capture: true,
+            ..Default::default()
+        };
+        a.step = WizardStep::DockerMounts;
+        a.on_enter_step(); // cursor 0 = etc
+        press(&mut a, KeyCode::Down); // -> raw (Pcap)
+        typ(&mut a, "-x"); // append to the raw host path
+        assert_eq!(
+            a.docker_mounts.host(crate::domain::MountKind::Pcap),
+            "/arkime/raw-x"
+        );
+
+        a.sync_docs();
+        let compose = a.docs.iter().find(|d| d.kind == DocKind::Compose).unwrap();
+        assert!(compose.text.contains("/arkime/raw-x:/opt/arkime/raw"));
     }
 
     #[test]

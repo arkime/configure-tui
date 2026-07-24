@@ -342,26 +342,42 @@ fn render_wise_url(app: &App, f: &mut Frame, area: Rect) {
 fn render_docker_mounts(app: &App, f: &mut Frame, area: Rect) {
     let relevant = MountSelection::relevant_kinds(&app.components);
     let mut lines = vec![
-        Line::from("Suggested host mounts (space to toggle). Host paths on the left."),
+        Line::from("Host mounts — edit the host path, space toggles a mount on/off."),
+        Line::from(Span::styled(
+            "(the container path on the right is fixed)",
+            Style::default().fg(Color::DarkGray),
+        )),
         Line::from(""),
     ];
     for (i, kind) in relevant.iter().enumerate() {
-        let checked = if app.docker_mounts.is_enabled(*kind) {
-            "[x]"
-        } else {
-            "[ ]"
-        };
         let focused = i == app.cursor;
+        let enabled = app.docker_mounts.is_enabled(*kind);
+        let checked = if enabled { "[x]" } else { "[ ]" };
         let marker = if focused { "▶ " } else { "  " };
-        let style = if focused {
+        let host = app.docker_mounts.host(*kind);
+        let cursor = if focused { "_" } else { "" };
+        let host_style = if focused {
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
-        } else {
+        } else if enabled {
             Style::default()
+        } else {
+            Style::default().fg(Color::DarkGray)
         };
-        lines.push(Line::from(Span::styled(
-            format!("{marker}{checked} {}", kind.spec()),
-            style,
-        )));
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{marker}{checked} {:<11} ", kind.label()),
+                if focused {
+                    Style::default().fg(ACCENT)
+                } else {
+                    Style::default().fg(Color::Gray)
+                },
+            ),
+            Span::styled(format!("{host}{cursor}"), host_style),
+            Span::styled(
+                format!(" → {}", kind.container()),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
     }
     f.render_widget(Paragraph::new(lines), area);
 }
@@ -453,7 +469,7 @@ fn render_review(app: &App, f: &mut Frame, area: Rect) {
         let mounts: Vec<String> = MountSelection::relevant_kinds(&app.components)
             .into_iter()
             .filter(|k| app.docker_mounts.is_enabled(*k))
-            .map(|k| k.spec())
+            .map(|k| app.docker_mounts.spec(k))
             .collect();
         let text = if mounts.is_empty() {
             "(none)".to_string()
@@ -533,7 +549,9 @@ fn render_footer(app: &App, f: &mut Frame, area: Rect) {
             }
         }
         WizardStep::WiseUrl => "type · Enter next · Esc back",
-        WizardStep::DockerMounts => "↑↓ move · space toggle · Enter next · Esc back",
+        WizardStep::DockerMounts => {
+            "↑↓ row · type host path · space toggle · Enter next · Esc back"
+        }
         WizardStep::Elasticsearch => "Tab/↑↓ field · type · space (demo) · Enter next · Esc back",
         WizardStep::GeoIp => "y/n · Enter next · Esc back",
         WizardStep::Review => "Enter apply · Esc back",
