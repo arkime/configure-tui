@@ -44,6 +44,15 @@ fn main() {
     app.step = WizardStep::ComponentsSelect;
     println!("=== Components screen ===\n{}", render(&app));
 
+    // Force some detected NICs so the checkbox list shows (host detection is
+    // empty on non-Linux).
+    app.detected_interfaces = vec!["eth0".into(), "eth1".into(), "ens5".into()];
+    app.interface_checked = vec![true, false, false];
+    app.interface_advanced = false;
+    app.cursor = 1;
+    app.step = WizardStep::Interfaces;
+    println!("=== Interfaces screen (checkboxes) ===\n{}", render(&app));
+
     app.deployment = Some(Deployment::Native);
     app.answers.interfaces = "eth0;eth1".into();
     app.answers.elasticsearch = "https://os:9200".into();

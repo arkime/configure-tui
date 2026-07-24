@@ -145,20 +145,49 @@ fn field_line(label: &str, value: &str, focused: bool) -> Line<'static> {
 }
 
 fn render_interfaces(app: &App, f: &mut Frame, area: Rect) {
-    let detected = if app.detected_interfaces.is_empty() {
-        "none detected".to_string()
-    } else {
-        app.detected_interfaces.join(", ")
-    };
-    let lines = vec![
-        Line::from("Interface(s) to monitor, ';'-separated."),
-        Line::from(Span::styled(
-            format!("Detected: {detected}"),
-            Style::default().fg(Color::DarkGray),
-        )),
+    if app.interface_advanced {
+        let hint = if app.detected_interfaces.is_empty() {
+            "No interfaces detected — type them manually.".to_string()
+        } else {
+            "Advanced mode — Tab returns to the checkbox list.".to_string()
+        };
+        let lines = vec![
+            Line::from("Interface(s) to monitor, ';'-separated."),
+            Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray))),
+            Line::from(""),
+            field_line("interfaces", app.fields.interface.value(), true),
+        ];
+        f.render_widget(Paragraph::new(lines), area);
+        return;
+    }
+
+    let mut lines = vec![
+        Line::from("Select the interface(s) to monitor (space to toggle)."),
         Line::from(""),
-        field_line("interfaces", app.fields.interface.value(), true),
     ];
+    for (i, name) in app.detected_interfaces.iter().enumerate() {
+        let checked = if app.interface_checked[i] {
+            "[x]"
+        } else {
+            "[ ]"
+        };
+        let focused = i == app.cursor;
+        let marker = if focused { "▶ " } else { "  " };
+        let style = if focused {
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(Span::styled(
+            format!("{marker}{checked} {name}"),
+            style,
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Press 'a' for advanced mode (type interfaces by hand).",
+        Style::default().fg(Color::DarkGray),
+    )));
     f.render_widget(Paragraph::new(lines), area);
 }
 
@@ -326,7 +355,14 @@ fn render_footer(app: &App, f: &mut Frame, area: Rect) {
     let help = match app.step {
         WizardStep::DeploymentSelect => "↑↓ choose · Enter select · Esc quit",
         WizardStep::ComponentsSelect => "↑↓ move · space toggle · Enter next · ← back · Esc quit",
-        WizardStep::Interfaces | WizardStep::S2sPassword => "type · Enter next · ← back · Esc quit",
+        WizardStep::Interfaces => {
+            if app.interface_advanced {
+                "type · Tab checkboxes · Enter next · Esc quit"
+            } else {
+                "↑↓ move · space toggle · a advanced · Enter next · ← back"
+            }
+        }
+        WizardStep::S2sPassword => "type · Enter next · ← back · Esc quit",
         WizardStep::Elasticsearch => "Tab/↑↓ field · type · space (demo) · Enter next · ← back",
         WizardStep::GeoIp => "y/n · Enter next · ← back · Esc quit",
         WizardStep::Review => "Enter apply · ← back · Esc quit",

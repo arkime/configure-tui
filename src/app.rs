@@ -40,10 +40,16 @@ pub struct App {
     pub detected_interfaces: Vec<String>,
 
     pub fields: Fields,
-    /// Cursor for select-style screens (deployment, components).
+    /// Cursor for select-style screens (deployment, components, interface list).
     pub cursor: usize,
     /// Sub-field focus for the multi-field Elasticsearch screen (0..=3).
     pub es_focus: usize,
+
+    /// Per-detected-interface checkbox state, parallel to `detected_interfaces`.
+    pub interface_checked: Vec<bool>,
+    /// When true, the Interfaces screen shows a free-text field instead of the
+    /// checkbox list (advanced mode).
+    pub interface_advanced: bool,
 
     pub log: Vec<LogLine>,
     pub applied: bool,
@@ -55,7 +61,7 @@ impl App {
     pub fn new(build: BuildConfig, platform: Platform) -> Self {
         let detected = interfaces::detect(platform.os);
         let mut fields = Fields::default();
-        // Prefill interface with detected list (or bash's eth1 default).
+        // Advanced-mode free-text prefill (bash's eth1 default when none found).
         let iface_default = if detected.is_empty() {
             "eth1".to_string()
         } else {
@@ -63,6 +69,14 @@ impl App {
         };
         fields.interface = Input::new(iface_default);
         fields.es_url = Input::new(Answers::DEFAULT_ES_URL.to_string());
+
+        // Pre-check the first detected interface (common single-NIC case). With
+        // nothing detected there is nothing to check, so start in advanced mode.
+        let mut interface_checked = vec![false; detected.len()];
+        if let Some(first) = interface_checked.first_mut() {
+            *first = true;
+        }
+        let interface_advanced = detected.is_empty();
 
         App {
             build,
@@ -79,6 +93,8 @@ impl App {
             fields,
             cursor: 0,
             es_focus: 0,
+            interface_checked,
+            interface_advanced,
             log: Vec::new(),
             applied: false,
             error: None,
@@ -107,6 +123,7 @@ impl App {
                 };
             }
             WizardStep::ComponentsSelect => self.cursor = 0,
+            WizardStep::Interfaces => self.cursor = 0,
             WizardStep::Elasticsearch => self.es_focus = 0,
             _ => {}
         }
@@ -125,7 +142,7 @@ impl App {
         match self.step {
             WizardStep::DeploymentSelect => self.key_deployment(key),
             WizardStep::ComponentsSelect => self.key_components(key),
-            WizardStep::Interfaces => self.key_text(key, |a| a.step_from_interfaces()),
+            WizardStep::Interfaces => self.key_interfaces(key),
             WizardStep::Elasticsearch => self.key_elasticsearch(key),
             WizardStep::S2sPassword => self.key_s2s(key),
             WizardStep::GeoIp => self.key_geoip(key),
@@ -175,24 +192,8 @@ impl App {
         }
     }
 
-    /// Shared handler for single-text-field screens.
-    fn key_text(&mut self, key: KeyEvent, on_enter: fn(&mut App)) {
-        match key.code {
-            KeyCode::Enter => on_enter(self),
-            KeyCode::Backspace if self.field_is_empty_at_start() => self.retreat(),
-            _ => {
-                self.active_input().handle_event(&Event::Key(key));
-            }
-        }
-    }
-
-    fn field_is_empty_at_start(&self) -> bool {
-        false // Backspace edits text; use Left to go back instead.
-    }
-
     fn active_input(&mut self) -> &mut Input {
         match self.step {
-            WizardStep::Interfaces => &mut self.fields.interface,
             WizardStep::S2sPassword => &mut self.fields.s2s,
             WizardStep::Elasticsearch => match self.es_focus {
                 0 => &mut self.fields.es_url,
@@ -203,9 +204,69 @@ impl App {
         }
     }
 
-    fn step_from_interfaces(&mut self) {
-        self.answers.interfaces = self.fields.interface.value().trim().to_string();
-        self.advance();
+    /// Interfaces screen: a checkbox list of detected NICs, or an advanced
+    /// free-text field toggled with Tab / 'a'.
+    fn key_interfaces(&mut self, key: KeyEvent) {
+        if self.interface_advanced {
+            match key.code {
+                KeyCode::Enter => self.commit_interfaces(),
+                // Only offer "back to checkboxes" when there is something to show.
+                KeyCode::Tab if !self.detected_interfaces.is_empty() => {
+                    self.interface_advanced = false;
+                }
+                _ => {
+                    self.fields.interface.handle_event(&Event::Key(key));
+                }
+            }
+            return;
+        }
+
+        let n = self.detected_interfaces.len();
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') if n > 0 => {
+                self.cursor = (self.cursor + n - 1) % n;
+            }
+            KeyCode::Down | KeyCode::Char('j') if n > 0 => {
+                self.cursor = (self.cursor + 1) % n;
+            }
+            KeyCode::Char(' ') if n > 0 => {
+                self.interface_checked[self.cursor] = !self.interface_checked[self.cursor];
+            }
+            KeyCode::Char('a') | KeyCode::Tab => {
+                // Seed the advanced field with the current checkbox selection so
+                // the user edits from where they are.
+                self.fields.interface = Input::new(self.checked_interfaces().join(";"));
+                self.interface_advanced = true;
+            }
+            KeyCode::Enter => self.commit_interfaces(),
+            KeyCode::Left | KeyCode::Backspace => self.retreat(),
+            _ => {}
+        }
+    }
+
+    fn checked_interfaces(&self) -> Vec<String> {
+        self.detected_interfaces
+            .iter()
+            .zip(&self.interface_checked)
+            .filter(|(_, &checked)| checked)
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+
+    /// Resolve the interface answer from whichever mode is active and advance,
+    /// or set an error if the selection is empty.
+    fn commit_interfaces(&mut self) {
+        let value = if self.interface_advanced {
+            self.fields.interface.value().trim().to_string()
+        } else {
+            self.checked_interfaces().join(";")
+        };
+        if value.is_empty() {
+            self.error = Some("Select an interface (space), or press 'a' to type manually.".into());
+        } else {
+            self.answers.interfaces = value;
+            self.advance();
+        }
     }
 
     fn key_elasticsearch(&mut self, key: KeyEvent) {
@@ -363,9 +424,11 @@ mod tests {
         assert!(a.components.capture && a.components.viewer);
         assert_eq!(a.step, WizardStep::Interfaces);
 
-        // Interfaces: clear prefill, type our own.
-        a.fields.interface = Input::default();
-        typ(&mut a, "eth9");
+        // Interfaces: detection is host-dependent, so set a known checkbox state.
+        a.detected_interfaces = vec!["eth9".into(), "eth8".into()];
+        a.interface_checked = vec![true, false];
+        a.interface_advanced = false;
+        a.cursor = 0;
         press(&mut a, KeyCode::Enter);
         assert_eq!(a.answers.interfaces, "eth9");
         assert_eq!(a.step, WizardStep::Elasticsearch);
@@ -389,6 +452,52 @@ mod tests {
         // GeoIP default is yes; proceed to Review.
         press(&mut a, KeyCode::Enter);
         assert_eq!(a.step, WizardStep::Review);
+    }
+
+    #[test]
+    fn interface_checkboxes_toggle_and_join() {
+        let mut a = app();
+        a.detected_interfaces = vec!["eth0".into(), "eth1".into(), "eth2".into()];
+        a.interface_checked = vec![false, false, false];
+        a.interface_advanced = false;
+        a.step = WizardStep::Interfaces;
+        a.cursor = 0;
+
+        press(&mut a, KeyCode::Char(' ')); // check eth0
+        press(&mut a, KeyCode::Down);
+        press(&mut a, KeyCode::Down);
+        press(&mut a, KeyCode::Char(' ')); // check eth2
+        press(&mut a, KeyCode::Enter);
+
+        assert_eq!(a.answers.interfaces, "eth0;eth2");
+    }
+
+    #[test]
+    fn interface_empty_selection_errors() {
+        let mut a = app();
+        a.detected_interfaces = vec!["eth0".into()];
+        a.interface_checked = vec![false];
+        a.interface_advanced = false;
+        a.step = WizardStep::Interfaces;
+        press(&mut a, KeyCode::Enter);
+        assert_eq!(a.step, WizardStep::Interfaces);
+        assert!(a.error.is_some());
+    }
+
+    #[test]
+    fn interface_advanced_mode_lets_you_type() {
+        let mut a = app();
+        a.detected_interfaces = vec!["eth0".into()];
+        a.interface_checked = vec![true];
+        a.interface_advanced = false;
+        a.step = WizardStep::Interfaces;
+
+        press(&mut a, KeyCode::Char('a')); // switch to advanced
+        assert!(a.interface_advanced);
+        // Seeded from the checked selection, then append a second interface.
+        typ(&mut a, ";bond0");
+        press(&mut a, KeyCode::Enter);
+        assert_eq!(a.answers.interfaces, "eth0;bond0");
     }
 
     #[test]
