@@ -24,8 +24,10 @@ dependencies, so it can be produced once and pulled into the rpm/deb packages.
 3. **Components** — multi-select toggles; later prompts are the union of what the
    selected components need.
 4. **Interfaces** (capture only; checkbox list of detected NICs + advanced
-   free-type), **OpenSearch/Elasticsearch** (URL/user/password + optional local
-   demo), **Encryption password**, **Plugins** (capture only; checkbox list,
+   free-type), **OpenSearch/Elasticsearch** (URL/user/password; in docker you can
+   opt into a single-node Elasticsearch we configure — you pick the host data
+   dir, which becomes a compose volume, and heap is auto-sized so there's no
+   memory question), **Encryption password**, **Plugins** (capture only; checkbox list,
    auto-enables `wise.so` when the wise component is on), **WISE URL** (only when
    `wise.so` is enabled without deploying the wise component — points capture at
    an external WISE), **GeoIP** (native + capture), **Docker mounts** (docker

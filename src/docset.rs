@@ -20,14 +20,14 @@ use std::path::{Path, PathBuf};
 /// Container images used when materializing docker services.
 pub struct Images {
     pub arkime: String,
-    pub opensearch: String,
+    pub elasticsearch: String,
 }
 
 impl Default for Images {
     fn default() -> Self {
         Images {
             arkime: "arkime/arkime:latest".into(),
-            opensearch: "opensearchproject/opensearch:2".into(),
+            elasticsearch: "elasticsearch:8.19.19".into(),
         }
     }
 }
@@ -183,7 +183,12 @@ fn env_pairs() -> [(&'static str, EnvGetter); 6] {
             (!a.interfaces.is_empty()).then(|| a.interfaces.clone())
         }),
         ("ARKIME__elasticsearch", |a, _| {
-            Some(a.elasticsearch_or_default().to_string())
+            // When we run the single-node ES, point at it (host net, no TLS).
+            if a.install_demo_es {
+                Some(Answers::SINGLE_NODE_ES_URL.to_string())
+            } else {
+                Some(a.elasticsearch_or_default().to_string())
+            }
         }),
         ("ARKIME__elasticsearchBasicAuth", |a, enc| {
             a.has_es_user()
@@ -289,7 +294,8 @@ fn arkime_service_name(c: Component) -> String {
 
 /// Merge our services into a compose document, preserving unknown services and
 /// top-level keys. We own the five `arkime-*` services (their standard fields)
-/// and add an `opensearch` service only when demo mode is on and none exists.
+/// and add an `elasticsearch` service only when single-node mode is on and none
+/// exists.
 pub fn render_compose(
     base: &str,
     components: &Components,
@@ -318,7 +324,7 @@ pub fn render_compose(
         }
     };
 
-    let es_depends = answers.install_demo_es || services.contains_key(Value::from("opensearch"));
+    let es_depends = answers.install_demo_es || services.contains_key(Value::from("elasticsearch"));
 
     for c in Component::ALL {
         let key = Value::from(arkime_service_name(c));
@@ -334,16 +340,17 @@ pub fn render_compose(
         }
     }
 
-    // Demo backend: add opensearch + a named volume if not already present.
-    if answers.install_demo_es && !services.contains_key(Value::from("opensearch")) {
-        services.insert(Value::from("opensearch"), opensearch_service(images));
-        let volumes = root_map
-            .entry(Value::from("volumes"))
-            .or_insert_with(|| Value::Mapping(Mapping::new()));
-        if let Some(m) = volumes.as_mapping_mut() {
-            m.entry(Value::from("osdata"))
-                .or_insert(Value::Mapping(Mapping::new()));
-        }
+    // Single-node Elasticsearch we configure (added if not already present).
+    if answers.install_demo_es && !services.contains_key(Value::from("elasticsearch")) {
+        let data_dir = if answers.es_data_dir.is_empty() {
+            Answers::DEFAULT_ES_DATA_DIR
+        } else {
+            &answers.es_data_dir
+        };
+        services.insert(
+            Value::from("elasticsearch"),
+            elasticsearch_service(images, data_dir),
+        );
     }
 
     serde_yml::to_string(&root).unwrap_or_else(|e| format!("# serialization error: {e}\n"))
@@ -370,7 +377,7 @@ fn fill_arkime_service(
     }
 
     if es_depends {
-        set_seq(svc, "depends_on", &["opensearch".to_string()]);
+        set_seq(svc, "depends_on", &["elasticsearch".to_string()]);
     } else {
         svc.remove(Value::from("depends_on"));
     }
@@ -392,20 +399,39 @@ fn fill_arkime_service(
     }
 }
 
-fn opensearch_service(images: &Images) -> Value {
+/// A single-node Elasticsearch service, matching the shape Arkime deployments
+/// use: host networking, security disabled, memlock unlimited, and a
+/// bind-mounted data dir. Heap is intentionally NOT pinned — modern ES
+/// auto-sizes the JVM heap from the container's memory.
+fn elasticsearch_service(images: &Images, data_dir: &str) -> Value {
     let mut m = Mapping::new();
-    set_str(&mut m, "image", &images.opensearch);
-    let mut env = Mapping::new();
-    env.insert(Value::from("discovery.type"), Value::from("single-node"));
-    env.insert(Value::from("bootstrap.memory_lock"), Value::from("true"));
-    env.insert(Value::from("DISABLE_SECURITY_PLUGIN"), Value::from("true"));
-    m.insert(Value::from("environment"), Value::Mapping(env));
+    set_str(&mut m, "container_name", "elasticsearch");
+    set_str(&mut m, "image", &images.elasticsearch);
+    set_str(&mut m, "network_mode", "host");
+    set_seq(
+        &mut m,
+        "environment",
+        &[
+            "discovery.type=single-node".to_string(),
+            "xpack.security.enabled=false".to_string(),
+            "xpack.security.enrollment.enabled=false".to_string(),
+            "xpack.security.transport.ssl.enabled=false".to_string(),
+            "xpack.security.http.ssl.enabled=false".to_string(),
+        ],
+    );
+    // ulimits: { memlock: { soft: -1, hard: -1 } }
+    let mut memlock = Mapping::new();
+    memlock.insert(Value::from("soft"), Value::from(-1));
+    memlock.insert(Value::from("hard"), Value::from(-1));
+    let mut ulimits = Mapping::new();
+    ulimits.insert(Value::from("memlock"), Value::Mapping(memlock));
+    m.insert(Value::from("ulimits"), Value::Mapping(ulimits));
+
     set_seq(
         &mut m,
         "volumes",
-        &["osdata:/usr/share/opensearch/data".to_string()],
+        &[format!("{data_dir}:/usr/share/elasticsearch/data")],
     );
-    set_seq(&mut m, "ports", &["9200:9200".to_string()]);
     set_str(&mut m, "restart", "unless-stopped");
     Value::Mapping(m)
 }
@@ -446,7 +472,21 @@ pub fn parse_compose(
         let present = services.contains_key(Value::from(arkime_service_name(c)));
         set_component(components, c, present);
     }
-    answers.install_demo_es = services.contains_key(Value::from("opensearch"));
+    answers.install_demo_es = services.contains_key(Value::from("elasticsearch"));
+    // Recover the ES data dir from its bind mount.
+    if let Some(es) = services
+        .get(Value::from("elasticsearch"))
+        .and_then(|v| v.as_mapping())
+    {
+        if let Some(host) = es
+            .get(Value::from("volumes"))
+            .and_then(|v| v.as_sequence())
+            .and_then(|s| s.iter().filter_map(|v| v.as_str()).next())
+            .and_then(|v| v.strip_suffix(":/usr/share/elasticsearch/data"))
+        {
+            answers.es_data_dir = host.to_string();
+        }
+    }
 
     // Mounts from whichever of capture/viewer exists.
     let svc = services
@@ -580,5 +620,56 @@ mod tests {
         );
         assert!(out2.contains("myextra"));
         assert!(!out2.contains("arkime-capture"));
+    }
+
+    #[test]
+    fn single_node_es_service_and_data_dir_round_trip() {
+        let components = Components {
+            capture: true,
+            ..Default::default()
+        };
+        let a = Answers {
+            install_demo_es: true,
+            es_data_dir: "/esdata".into(),
+            ..answers()
+        };
+        let out = render_compose(
+            &out_default(&components, &a),
+            &components,
+            &a,
+            &MountSelection::default(),
+            &Images::default(),
+        );
+        assert!(out.contains("container_name: elasticsearch"));
+        assert!(out.contains("image: elasticsearch:8.19.19"));
+        assert!(out.contains("network_mode: host"));
+        assert!(out.contains("discovery.type=single-node"));
+        assert!(out.contains("xpack.security.enabled=false"));
+        assert!(out.contains("/esdata:/usr/share/elasticsearch/data"));
+        assert!(out.contains("memlock"));
+        // Heap is auto-sized — we don't pin ES_JAVA_OPTS.
+        assert!(!out.contains("ES_JAVA_OPTS"));
+
+        // Env points the containers at the single-node ES over localhost.
+        let env = render_env("", &a, BasicAuthEncoding::Plaintext);
+        assert!(env.contains("ARKIME__elasticsearch=http://localhost:9200"));
+
+        // Round-trip: parse recovers the flag + data dir.
+        let mut c = Components::default();
+        let mut ans = Answers::default();
+        let mut m = MountSelection::default();
+        parse_compose(&out, &mut c, &mut ans, &mut m);
+        assert!(ans.install_demo_es);
+        assert_eq!(ans.es_data_dir, "/esdata");
+    }
+
+    fn out_default(components: &Components, a: &Answers) -> String {
+        render_compose(
+            "",
+            components,
+            a,
+            &MountSelection::default(),
+            &Images::default(),
+        )
     }
 }

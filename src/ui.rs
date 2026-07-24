@@ -239,7 +239,13 @@ fn render_elasticsearch(app: &App, f: &mut Frame, area: Rect) {
     } else {
         "[ ]"
     };
-    let lines = vec![
+    let is_docker = app.deployment == Some(Deployment::Docker);
+    let toggle_label = if is_docker {
+        "run a single-node Elasticsearch we configure (space)"
+    } else {
+        "install a local demo Elasticsearch (space)"
+    };
+    let mut lines = vec![
         Line::from("OpenSearch/Elasticsearch connection. Tab/↑↓ between fields."),
         Line::from(""),
         field_line("URL", app.fields.es_url.value(), app.es_focus == 0),
@@ -261,14 +267,19 @@ fn render_elasticsearch(app: &App, f: &mut Frame, area: Rect) {
                 Style::default()
             };
             Line::from(Span::styled(
-                format!(
-                    "{}{demo} install local demo OpenSearch (space)",
-                    if focused { "▶ " } else { "  " }
-                ),
+                format!("{}{demo} {toggle_label}", if focused { "▶ " } else { "  " }),
                 style,
             ))
         },
     ];
+    // Docker single-node ES: ask for the host data directory (a compose volume).
+    if is_docker && app.answers.install_demo_es {
+        lines.push(field_line(
+            "data dir",
+            app.fields.es_data.value(),
+            app.es_focus == 4,
+        ));
+    }
     f.render_widget(Paragraph::new(lines), area);
 }
 
@@ -428,18 +439,33 @@ fn render_review(app: &App, f: &mut Frame, area: Rect) {
         lines.push(kv("Interfaces", &app.answers.interfaces));
     }
     if app.components.needs_elasticsearch() {
-        lines.push(kv("Elasticsearch", app.answers.elasticsearch_or_default()));
-        if app.answers.has_es_user() {
+        let is_docker = app.deployment == Some(Deployment::Docker);
+        let single_node = app.answers.install_demo_es;
+        // With our single-node ES the containers use localhost.
+        let es_url = if is_docker && single_node {
+            crate::domain::Answers::SINGLE_NODE_ES_URL
+        } else {
+            app.answers.elasticsearch_or_default()
+        };
+        lines.push(kv("Elasticsearch", es_url));
+        if app.answers.has_es_user() && !single_node {
             lines.push(kv("ES user", &app.answers.es_user));
         }
-        lines.push(kv(
-            "Demo OpenSearch",
-            if app.answers.install_demo_es {
-                "yes"
-            } else {
-                "no"
-            },
-        ));
+        if is_docker {
+            lines.push(kv(
+                "Single-node ES",
+                if single_node {
+                    "yes (we configure it)"
+                } else {
+                    "no"
+                },
+            ));
+            if single_node {
+                lines.push(kv("ES data dir", &app.answers.es_data_dir));
+            }
+        } else {
+            lines.push(kv("Demo ES", if single_node { "yes" } else { "no" }));
+        }
     }
     if app.components.needs_s2s_password() {
         lines.push(kv("Encryption pw", &mask(&app.answers.s2s_password)));

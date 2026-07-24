@@ -73,6 +73,7 @@ fn main() {
         es_password: "pass".into(),
         s2s_password: "secret".into(),
         install_demo_es: true,
+        es_data_dir: "/esdata".into(),
         plugins: "wise.so;ja4plus.amd64.so;entropy.so".into(),
         ..Default::default()
     };

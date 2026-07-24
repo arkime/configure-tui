@@ -32,6 +32,7 @@ pub struct Fields {
     pub s2s: Input,
     pub plugins: Input,
     pub wise_url: Input,
+    pub es_data: Input,
     pub load_path: Input,
 }
 
@@ -106,6 +107,7 @@ impl App {
         fields.interface = Input::new(iface_default);
         fields.es_url = Input::new(Answers::DEFAULT_ES_URL.to_string());
         fields.wise_url = Input::new(Answers::DEFAULT_WISE_URL.to_string());
+        fields.es_data = Input::new(Answers::DEFAULT_ES_DATA_DIR.to_string());
 
         // Pre-check the first detected interface (common single-NIC case). With
         // nothing detected there is nothing to check, so start in advanced mode.
@@ -373,10 +375,17 @@ impl App {
             WizardStep::Elasticsearch => match self.es_focus {
                 0 => &mut self.fields.es_url,
                 1 => &mut self.fields.es_user,
-                _ => &mut self.fields.es_password,
+                2 => &mut self.fields.es_password,
+                _ => &mut self.fields.es_data, // field 4
             },
             _ => &mut self.fields.interface,
         }
+    }
+
+    /// Whether the ES screen shows the extra "data dir" field (docker + we run
+    /// the single-node ES).
+    fn es_shows_data_dir(&self) -> bool {
+        self.deployment == Some(Deployment::Docker) && self.answers.install_demo_es
     }
 
     /// Interfaces screen: a checkbox list of detected NICs, or an advanced
@@ -540,20 +549,27 @@ impl App {
     }
 
     fn key_elasticsearch(&mut self, key: KeyEvent) {
-        // Fields: 0 url, 1 user, 2 password, 3 demo-es toggle.
+        // Fields: 0 url, 1 user, 2 password, 3 single-node toggle, 4 data dir
+        // (only shown in docker when the single-node ES is on).
+        let max_focus = if self.es_shows_data_dir() { 4 } else { 3 };
         match key.code {
             KeyCode::Up => self.es_focus = self.es_focus.saturating_sub(1),
-            KeyCode::Down | KeyCode::Tab => self.es_focus = (self.es_focus + 1).min(3),
+            KeyCode::Down | KeyCode::Tab => self.es_focus = (self.es_focus + 1).min(max_focus),
             KeyCode::Char(' ') if self.es_focus == 3 => {
                 self.answers.install_demo_es = !self.answers.install_demo_es;
+                if !self.es_shows_data_dir() && self.es_focus > 3 {
+                    self.es_focus = 3;
+                }
             }
             KeyCode::Enter => {
                 self.answers.elasticsearch = self.fields.es_url.value().trim().to_string();
                 self.answers.es_user = self.fields.es_user.value().trim().to_string();
                 self.answers.es_password = self.fields.es_password.value().to_string();
+                self.answers.es_data_dir = self.fields.es_data.value().trim().to_string();
                 self.advance();
             }
-            _ if self.es_focus < 3 => {
+            // Fields 0/1/2/4 are text; 3 is the toggle.
+            _ if self.es_focus != 3 => {
                 self.active_input().handle_event(&Event::Key(key));
             }
             _ => {}
@@ -772,6 +788,9 @@ impl App {
         self.fields.es_password = Input::new(self.answers.es_password.clone());
         self.fields.s2s = Input::new(self.answers.s2s_password.clone());
         self.fields.plugins = Input::new(self.answers.plugins.clone());
+        if !self.answers.es_data_dir.is_empty() {
+            self.fields.es_data = Input::new(self.answers.es_data_dir.clone());
+        }
         if !self.answers.wise_url.is_empty() {
             self.fields.wise_url = Input::new(self.answers.wise_url.clone());
         }

@@ -13,9 +13,13 @@ pub struct Answers {
     pub es_password: String,
     /// S2S / encryption secret (`passwordSecret`). Required for capture/viewer.
     pub s2s_password: String,
-    /// Whether to stand up a local demo OpenSearch/Elasticsearch. In native mode
-    /// this triggers a package install; in docker mode it adds a compose service.
+    /// Whether to stand up a single-node Elasticsearch we configure. In native
+    /// mode this triggers a package install; in docker mode it adds a compose
+    /// service (with a bind-mounted data dir — see `es_data_dir`).
     pub install_demo_es: bool,
+    /// Host data directory for the docker single-node Elasticsearch (compose
+    /// volume, not an env var). Only used when `install_demo_es` in docker mode.
+    pub es_data_dir: String,
     /// Whether to download GeoIP files (native mode only).
     pub download_geoip: bool,
     /// `;`-separated capture plugin list (already finalized, incl. wise.so when
@@ -32,6 +36,13 @@ impl Answers {
 
     /// Default WISE URL suggested when configuring an external WISE service.
     pub const DEFAULT_WISE_URL: &'static str = "http://127.0.0.1:8081";
+
+    /// Default host data dir for the docker single-node Elasticsearch.
+    pub const DEFAULT_ES_DATA_DIR: &'static str = "/esdata";
+
+    /// URL the arkime containers use to reach the single-node ES (host net,
+    /// security disabled).
+    pub const SINGLE_NODE_ES_URL: &'static str = "http://localhost:9200";
 
     pub fn has_es_user(&self) -> bool {
         !self.es_user.is_empty()
