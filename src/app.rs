@@ -276,11 +276,9 @@ impl App {
             self.editor_key(key);
             return;
         }
-        // Ctrl+E opens the editor anywhere; plain 'e' on non-typing screens.
+        // Ctrl+E opens the editor anywhere.
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let ctrl_e = key.code == KeyCode::Char('e') && ctrl;
-        let plain_e = matches!(key.code, KeyCode::Char('e')) && !self.screen_is_text_input();
-        if ctrl_e || plain_e {
+        if key.code == KeyCode::Char('e') && ctrl {
             self.open_editor();
             return;
         }
@@ -1023,7 +1021,52 @@ impl App {
 
     // --- editor ----------------------------------------------------------
 
+    /// Push the active screen's in-progress UI state (checkboxes / text fields)
+    /// into `answers`, without validating or advancing. Used before opening the
+    /// editor so an uncommitted selection isn't lost on the round-trip.
+    fn commit_pending_ui(&mut self) {
+        match self.step {
+            WizardStep::Interfaces => {
+                let v = if self.interface_advanced {
+                    self.fields.interface.value().trim().to_string()
+                } else {
+                    self.checked_interfaces().join(";")
+                };
+                if !v.is_empty() {
+                    self.answers.interfaces = v;
+                }
+            }
+            WizardStep::Elasticsearch => {
+                self.answers.elasticsearch = self.fields.es_url.value().trim().to_string();
+                self.answers.es_user = self.fields.es_user.value().trim().to_string();
+                self.answers.es_password = self.fields.es_password.value().to_string();
+                self.answers.es_data_dir = self.fields.es_data.value().trim().to_string();
+            }
+            WizardStep::S2sPassword => {
+                let v = self.fields.s2s.value().to_string();
+                if !v.is_empty() {
+                    self.answers.s2s_password = v;
+                }
+            }
+            WizardStep::Plugins => {
+                let raw = if self.plugin_advanced {
+                    self.fields.plugins.value().to_string()
+                } else {
+                    self.checked_plugins().join(";")
+                };
+                self.answers.plugins = plugins::finalize(&raw, self.components.wise);
+            }
+            WizardStep::WiseUrl => {
+                self.answers.wise_url = self.fields.wise_url.value().trim().to_string();
+            }
+            _ => {}
+        }
+    }
+
     pub fn open_editor(&mut self) {
+        // Fold the current screen's in-progress selection into `answers` first,
+        // so the editor reflects it and closing the editor doesn't discard it.
+        self.commit_pending_ui();
         self.sync_docs();
         if self.docs.is_empty() {
             self.error = Some("No files to edit yet.".into());
@@ -1598,6 +1641,44 @@ mod tests {
         press(&mut a, KeyCode::Char('d'));
         assert!(!a.detected_prefixes.contains(&"arkime2-".to_string()));
         assert_eq!(a.detected_prefixes, vec!["arkime-".to_string()]);
+    }
+
+    #[test]
+    fn opening_editor_mid_plugins_keeps_selection_and_still_asks_wise_url() {
+        let mut a = app();
+        a.deployment = Some(Deployment::Docker);
+        a.components = Components {
+            capture: true,
+            ..Default::default()
+        };
+        a.answers.interfaces = "eth0".into();
+        a.answers.s2s_password = "x".into();
+        a.step = WizardStep::Plugins;
+        a.on_enter_step();
+
+        // Check wise.so but do NOT commit the screen (no Enter).
+        a.cursor = 0;
+        press(&mut a, KeyCode::Char(' '));
+        // Open then close the editor — the selection must survive.
+        a.open_editor();
+        a.close_editor();
+        assert_eq!(a.answers.plugins, "wise.so");
+
+        // Committing plugins now leads to the WISE URL step.
+        press(&mut a, KeyCode::Enter);
+        assert_eq!(a.step, WizardStep::WiseUrl);
+    }
+
+    #[test]
+    fn plain_e_does_not_open_editor() {
+        let mut a = app();
+        a.components = Components {
+            capture: true,
+            ..Default::default()
+        };
+        a.step = WizardStep::ComponentsSelect;
+        press(&mut a, KeyCode::Char('e'));
+        assert!(a.editor.is_none());
     }
 
     #[test]
