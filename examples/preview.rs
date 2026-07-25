@@ -41,13 +41,20 @@ fn main() {
     );
     println!("=== Start screen (4 modes) ===\n{}", render(&app));
 
-    // Prefix-select screen (multi-prefix compose on load).
+    // Prefix-select screen (choose / add / delete).
     app.deployment = Some(Deployment::Docker);
     app.is_load = true;
     app.detected_prefixes = vec!["".into(), "arkime1-".into(), "arkime2-".into()];
     app.cursor = 2;
     app.step = WizardStep::PrefixSelect;
     println!("=== Prefix select screen ===\n{}", render(&app));
+
+    // Prefix add mode.
+    app.prefix_adding = true;
+    app.fields.prefix = tui_input::Input::new("arkime3-".into());
+    println!("=== Prefix add mode (a) ===\n{}", render(&app));
+    app.prefix_adding = false;
+
     app.deployment = None;
     app.is_load = false;
     app.detected_prefixes.clear();

@@ -353,6 +353,21 @@ pub fn detect_prefix(text: &str) -> Option<PrefixDetection> {
     Some(PrefixDetection { prefix, others })
 }
 
+/// Remove every arkime service using `prefix` from a compose document,
+/// preserving everything else. Used to delete a prefix set.
+pub fn remove_prefix_services(text: &str, prefix: &str) -> String {
+    let mut root: Value = match serde_yml::from_str(text) {
+        Ok(v) => v,
+        Err(_) => return text.to_string(),
+    };
+    if let Some(services) = root.get_mut("services").and_then(|v| v.as_mapping_mut()) {
+        for c in Component::ALL {
+            services.remove(Value::from(arkime_service_name(prefix, c)));
+        }
+    }
+    serde_yml::to_string(&root).unwrap_or_else(|_| text.to_string())
+}
+
 /// Merge our services into a compose document, preserving unknown services and
 /// top-level keys. We own the five `arkime-*` services (their standard fields)
 /// and add an `elasticsearch` service only when single-node mode is on and none
@@ -794,6 +809,15 @@ mod tests {
         assert_eq!(d.others, vec!["arkime6-".to_string()]);
 
         assert!(detect_prefix("services:\n  postgres:\n    image: p\n").is_none());
+    }
+
+    #[test]
+    fn remove_prefix_services_strips_only_that_prefix() {
+        let base = "services:\n  arkime-capture:\n    image: x\n  arkime2-capture:\n    image: y\n  other:\n    image: z\n";
+        let out = remove_prefix_services(base, "arkime2-");
+        assert!(!out.contains("arkime2-capture"));
+        assert!(out.contains("arkime-capture"));
+        assert!(out.contains("other"));
     }
 
     #[test]

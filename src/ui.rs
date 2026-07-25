@@ -148,10 +148,24 @@ fn render_load_path(app: &App, f: &mut Frame, area: Rect) {
 }
 
 fn render_prefix_select(app: &App, f: &mut Frame, area: Rect) {
+    if app.prefix_adding {
+        let lines = vec![
+            Line::from("New service-name prefix (e.g. `arkime2-`; blank = no prefix):"),
+            Line::from(Span::styled(
+                "It's prepended to the service names — arkime2-capture, arkime2-viewer, …",
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(""),
+            field_line("prefix", app.fields.prefix.value(), true),
+        ];
+        f.render_widget(Paragraph::new(lines), area);
+        return;
+    }
+
     let mut lines = vec![
-        Line::from("This compose has more than one arkime deployment."),
+        Line::from("Service prefix to manage (each prefix is a separate deployment)."),
         Line::from(Span::styled(
-            "Choose which service-name prefix to manage — the others are left untouched.",
+            "Enter select · a add · d delete — other prefixes are left untouched.",
             Style::default().fg(Color::DarkGray),
         )),
         Line::from(""),
@@ -614,7 +628,13 @@ fn render_footer(app: &App, f: &mut Frame, area: Rect) {
     let help = match app.step {
         WizardStep::StartSelect => "↑↓ choose · →/Enter select · Esc quit",
         WizardStep::LoadPath => "type path · Enter load · Esc back",
-        WizardStep::PrefixSelect => "↑↓ choose · →/Enter select · ←/Esc back",
+        WizardStep::PrefixSelect => {
+            if app.prefix_adding {
+                "type prefix · Enter add · Esc cancel"
+            } else {
+                "↑↓ choose · Enter select · a add · d delete · ←/Esc back"
+            }
+        }
         WizardStep::ComponentsSelect => "↑↓ move · space toggle · →/Enter next · ←/Esc back",
         WizardStep::Interfaces => {
             if app.interface_advanced {

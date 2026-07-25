@@ -34,6 +34,7 @@ pub struct Fields {
     pub wise_url: Input,
     pub es_data: Input,
     pub load_path: Input,
+    pub prefix: Input,
 }
 
 /// The full-file editor overlay: one text buffer per document, Tab-cycled.
@@ -94,6 +95,8 @@ pub struct App {
     /// Prefixes we are NOT managing (everything in `detected_prefixes` except the
     /// chosen one) — left untouched.
     pub other_prefixes: Vec<String>,
+    /// True while typing a new prefix name on the PrefixSelect screen.
+    pub prefix_adding: bool,
 
     /// Whether the process is running as root. Native apply needs it; docker
     /// does not.
@@ -158,6 +161,7 @@ impl App {
             service_prefix: docset::DEFAULT_PREFIX.to_string(),
             detected_prefixes: Vec::new(),
             other_prefixes: Vec::new(),
+            prefix_adding: false,
             is_root: crate::guards::is_root(),
             log: Vec::new(),
             applied: false,
@@ -168,12 +172,12 @@ impl App {
 
     fn advance(&mut self) {
         let w = self.wise_url_needed();
-        let mp = self.multi_prefix();
+        let sp = self.wants_prefix_step();
         self.step = steps::next(
             self.step,
             self.deployment,
             self.is_load,
-            mp,
+            sp,
             &self.components,
             w,
         );
@@ -183,12 +187,12 @@ impl App {
 
     fn retreat(&mut self) {
         let w = self.wise_url_needed();
-        let mp = self.multi_prefix();
+        let sp = self.wants_prefix_step();
         self.step = steps::prev(
             self.step,
             self.deployment,
             self.is_load,
-            mp,
+            sp,
             &self.components,
             w,
         );
@@ -196,11 +200,10 @@ impl App {
         self.on_enter_step();
     }
 
-    /// A loaded compose has more than one arkime prefix to choose between.
-    fn multi_prefix(&self) -> bool {
+    /// The prefix-management screen is shown for every docker flow (new or
+    /// load), so you can choose / add / delete the service-name prefix set.
+    fn wants_prefix_step(&self) -> bool {
         self.deployment == Some(Deployment::Docker)
-            && self.is_load
-            && self.detected_prefixes.len() > 1
     }
 
     /// The external WISE URL is only asked for when the wise.so plugin is
@@ -231,6 +234,11 @@ impl App {
                 }
             }
             WizardStep::PrefixSelect => {
+                self.prefix_adding = false;
+                // New docker files start with just the default prefix to manage.
+                if self.detected_prefixes.is_empty() {
+                    self.detected_prefixes = vec![self.service_prefix.clone()];
+                }
                 // Highlight the currently-chosen prefix.
                 self.cursor = self
                     .detected_prefixes
@@ -285,9 +293,13 @@ impl App {
             }
             return;
         }
-        // Esc always goes back a screen (quit on the first screen / after apply).
+        // Esc cancels prefix-add mode; otherwise it goes back a screen.
         if key.code == KeyCode::Esc {
-            self.back();
+            if self.step == WizardStep::PrefixSelect && self.prefix_adding {
+                self.prefix_adding = false;
+            } else {
+                self.back();
+            }
             return;
         }
         // On non-typing screens, Left/Right also navigate (← back, → forward).
@@ -352,6 +364,7 @@ impl App {
             | WizardStep::DockerMounts => true,
             WizardStep::Interfaces => self.interface_advanced,
             WizardStep::Plugins => self.plugin_advanced,
+            WizardStep::PrefixSelect => self.prefix_adding,
             _ => false,
         }
     }
@@ -389,30 +402,81 @@ impl App {
         }
     }
 
-    /// Choose which arkime prefix to manage from a multi-prefix compose.
+    /// Choose / add / delete which arkime prefix set to manage.
     fn key_prefix_select(&mut self, key: KeyEvent) {
-        let n = self.detected_prefixes.len();
-        if n == 0 {
-            if key.code == KeyCode::Enter {
-                self.advance();
+        // Add mode: typing a new prefix name.
+        if self.prefix_adding {
+            match key.code {
+                KeyCode::Enter => self.confirm_add_prefix(),
+                _ => {
+                    self.fields.prefix.handle_event(&Event::Key(key));
+                }
             }
             return;
         }
+
+        let n = self.detected_prefixes.len();
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => self.cursor = (self.cursor + n - 1) % n,
-            KeyCode::Down | KeyCode::Char('j') => self.cursor = (self.cursor + 1) % n,
-            KeyCode::Enter => {
-                self.service_prefix = self.detected_prefixes[self.cursor].clone();
-                self.other_prefixes = self
-                    .detected_prefixes
-                    .iter()
-                    .filter(|p| **p != self.service_prefix)
-                    .cloned()
-                    .collect();
+            KeyCode::Up | KeyCode::Char('k') if n > 0 => self.cursor = (self.cursor + n - 1) % n,
+            KeyCode::Down | KeyCode::Char('j') if n > 0 => self.cursor = (self.cursor + 1) % n,
+            KeyCode::Char('a') => {
+                self.fields.prefix = Input::default();
+                self.prefix_adding = true;
+            }
+            KeyCode::Char('d') if n > 0 => self.delete_prefix(self.cursor),
+            KeyCode::Enter if n > 0 => {
+                self.select_prefix(self.cursor);
                 self.reparse_for_prefix();
                 self.advance();
             }
             _ => {}
+        }
+    }
+
+    /// Make the prefix at `idx` the managed one and recompute the untouched set.
+    fn select_prefix(&mut self, idx: usize) {
+        self.service_prefix = self.detected_prefixes[idx].clone();
+        self.other_prefixes = self
+            .detected_prefixes
+            .iter()
+            .filter(|p| **p != self.service_prefix)
+            .cloned()
+            .collect();
+    }
+
+    /// Confirm the typed new prefix: add it (if new) and select it. A brand-new
+    /// prefix has no services yet, so components start empty for it.
+    fn confirm_add_prefix(&mut self) {
+        self.prefix_adding = false;
+        let p = self.fields.prefix.value().trim().to_string();
+        if !self.detected_prefixes.contains(&p) {
+            self.detected_prefixes.push(p.clone());
+        }
+        self.cursor = self
+            .detected_prefixes
+            .iter()
+            .position(|x| *x == p)
+            .unwrap_or(0);
+        self.select_prefix(self.cursor);
+        self.components = Components::default();
+        self.sync_fields_from_answers();
+    }
+
+    /// Delete a prefix set: strip its services from the compose and drop it from
+    /// the list. Keeps at least the default prefix around.
+    fn delete_prefix(&mut self, idx: usize) {
+        let removed = self.detected_prefixes.remove(idx);
+        for d in self.docs.iter_mut().filter(|d| d.kind == DocKind::Compose) {
+            d.text = docset::remove_prefix_services(&d.text, &removed);
+        }
+        if self.detected_prefixes.is_empty() {
+            self.detected_prefixes
+                .push(docset::DEFAULT_PREFIX.to_string());
+        }
+        self.cursor = self.cursor.min(self.detected_prefixes.len() - 1);
+        if self.service_prefix == removed {
+            self.select_prefix(self.cursor);
+            self.reparse_for_prefix();
         }
     }
 
@@ -1269,7 +1333,7 @@ mod tests {
                       // Right = forward (same as Enter).
         press(&mut a, KeyCode::Right);
         assert_eq!(a.deployment, Some(Deployment::Docker));
-        assert_eq!(a.step, WizardStep::ComponentsSelect);
+        assert_eq!(a.step, WizardStep::PrefixSelect);
         // Left = back.
         press(&mut a, KeyCode::Left);
         assert_eq!(a.step, WizardStep::StartSelect);
@@ -1289,7 +1353,8 @@ mod tests {
     fn components_requires_at_least_one() {
         let mut a = app();
         a.on_enter_step();
-        press(&mut a, KeyCode::Enter); // start (Docker new) -> components
+        press(&mut a, KeyCode::Enter); // start (Docker new) -> prefix
+        press(&mut a, KeyCode::Enter); // accept default prefix -> components
         press(&mut a, KeyCode::Enter); // no components selected
         assert_eq!(a.step, WizardStep::ComponentsSelect);
         assert!(a.error.is_some());
@@ -1302,6 +1367,10 @@ mod tests {
         a.cursor = 0; // Docker — create new
         press(&mut a, KeyCode::Enter);
         assert_eq!(a.deployment, Some(Deployment::Docker));
+        // Docker shows the prefix screen first; accept the default.
+        assert_eq!(a.step, WizardStep::PrefixSelect);
+        press(&mut a, KeyCode::Enter);
+        assert_eq!(a.step, WizardStep::ComponentsSelect);
 
         // Toggle wise (index 2).
         press(&mut a, KeyCode::Down);
@@ -1483,7 +1552,7 @@ mod tests {
 
         // Three prefixes detected: "", arkime1-, arkime2-.
         assert_eq!(a.detected_prefixes.len(), 3);
-        assert!(a.multi_prefix());
+        assert!(a.wants_prefix_step());
 
         // Advancing from LoadPath lands on the prefix chooser.
         a.advance();
@@ -1501,6 +1570,34 @@ mod tests {
         assert!(!a.components.viewer);
         assert!(!a.components.wise);
         assert_eq!(a.step, WizardStep::ComponentsSelect);
+    }
+
+    #[test]
+    fn prefix_add_and_delete() {
+        let mut a = app();
+        a.deployment = Some(Deployment::Docker);
+        a.step = WizardStep::PrefixSelect;
+        a.on_enter_step();
+        assert_eq!(a.detected_prefixes, vec!["arkime-".to_string()]);
+
+        // Add a new prefix.
+        press(&mut a, KeyCode::Char('a'));
+        assert!(a.prefix_adding);
+        typ(&mut a, "arkime2-");
+        press(&mut a, KeyCode::Enter);
+        assert!(!a.prefix_adding);
+        assert!(a.detected_prefixes.contains(&"arkime2-".to_string()));
+        assert_eq!(a.service_prefix, "arkime2-");
+
+        // Delete it again.
+        a.cursor = a
+            .detected_prefixes
+            .iter()
+            .position(|p| p == "arkime2-")
+            .unwrap();
+        press(&mut a, KeyCode::Char('d'));
+        assert!(!a.detected_prefixes.contains(&"arkime2-".to_string()));
+        assert_eq!(a.detected_prefixes, vec!["arkime-".to_string()]);
     }
 
     #[test]

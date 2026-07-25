@@ -51,7 +51,7 @@ pub enum WizardStep {
 pub fn required_steps(
     deployment: Option<Deployment>,
     is_load: bool,
-    multi_prefix: bool,
+    show_prefix: bool,
     components: &Components,
     wise_url_needed: bool,
 ) -> Vec<WizardStep> {
@@ -59,8 +59,8 @@ pub fn required_steps(
     if is_load {
         steps.push(WizardStep::LoadPath);
     }
-    // Only when a loaded compose has several arkime prefixes to choose between.
-    if multi_prefix {
+    // Docker: choose/add/delete which service prefix set to manage.
+    if show_prefix {
         steps.push(WizardStep::PrefixSelect);
     }
     steps.push(WizardStep::ComponentsSelect);
@@ -108,14 +108,14 @@ pub fn next(
     current: WizardStep,
     deployment: Option<Deployment>,
     is_load: bool,
-    multi_prefix: bool,
+    show_prefix: bool,
     components: &Components,
     wise_url_needed: bool,
 ) -> WizardStep {
     let steps = required_steps(
         deployment,
         is_load,
-        multi_prefix,
+        show_prefix,
         components,
         wise_url_needed,
     );
@@ -133,14 +133,14 @@ pub fn prev(
     current: WizardStep,
     deployment: Option<Deployment>,
     is_load: bool,
-    multi_prefix: bool,
+    show_prefix: bool,
     components: &Components,
     wise_url_needed: bool,
 ) -> WizardStep {
     let steps = required_steps(
         deployment,
         is_load,
-        multi_prefix,
+        show_prefix,
         components,
         wise_url_needed,
     );

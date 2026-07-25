@@ -55,10 +55,12 @@ back into the wizard. Editor and wizard are two views of the same data,
 last-write-wins. **`^D`** shows a **diff** of the current file vs its original —
 handy from the Review screen to see exactly what will change before writing.
 
-When loading a `docker-compose.yml`, the tool detects the **service-name
-prefix** (`arkime-viewer` vs `viewer` vs `arkime6-viewer`), round-trips it, and
-if several prefixes coexist it manages only the dominant set and leaves the
-others untouched.
+Every docker flow has a **Service prefix** step. The tool detects the
+service-name prefix (`arkime-viewer` vs `viewer` vs `arkime6-viewer`) and
+round-trips it. You can **choose** which prefix set to manage, **add** a new one
+(`a` — works on new files too, so one compose can hold several deployments), or
+**delete** one (`d` — strips those services). Prefixes you aren't managing are
+left untouched.
 
 Docker mode suggests these host mounts (all on by default, individually
 toggleable), attached to the capture/viewer services:
