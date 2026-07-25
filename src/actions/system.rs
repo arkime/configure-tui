@@ -24,6 +24,9 @@ pub enum Op {
         mode: u32,
         owner: String,
     },
+    Backup {
+        path: PathBuf,
+    },
 }
 
 pub trait SystemOps {
@@ -37,6 +40,9 @@ pub trait SystemOps {
     /// `mkdir -m <mode> -p <path>` then `chown <owner> <path>` if it does not
     /// already exist.
     fn mkdir_mode_chown(&self, path: &Path, mode: u32, owner: &str) -> Result<()>;
+    /// Copy an existing file to a timestamped `.bak` before it is overwritten.
+    /// Returns the backup path, or None if there was nothing to back up.
+    fn backup(&self, path: &Path) -> Result<Option<PathBuf>>;
 }
 
 /// Production implementation backed by std + `nix`.
@@ -74,6 +80,22 @@ impl SystemOps for RealOps {
         std::fs::create_dir_all(path).with_context(|| format!("mkdir {}", path.display()))?;
         set_mode(path, mode)?;
         chown(path, owner)
+    }
+
+    fn backup(&self, path: &Path) -> Result<Option<PathBuf>> {
+        if !path.exists() {
+            return Ok(None);
+        }
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let mut name = path.as_os_str().to_os_string();
+        name.push(format!(".{secs}.bak"));
+        let bak = PathBuf::from(name);
+        std::fs::copy(path, &bak)
+            .with_context(|| format!("backing up {} -> {}", path.display(), bak.display()))?;
+        Ok(Some(bak))
     }
 }
 
@@ -167,5 +189,34 @@ impl SystemOps for RecordingOps {
             owner: owner.to_string(),
         });
         Ok(())
+    }
+
+    fn backup(&self, path: &Path) -> Result<Option<PathBuf>> {
+        let existed = self.existing.contains(path);
+        self.ops.borrow_mut().push(Op::Backup {
+            path: path.to_path_buf(),
+        });
+        Ok(existed.then(|| path.with_extension("bak")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backup_copies_existing_and_skips_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("config.ini");
+        // Nothing to back up yet.
+        assert!(RealOps.backup(&f).unwrap().is_none());
+
+        std::fs::write(&f, "original").unwrap();
+        let bak = RealOps.backup(&f).unwrap().expect("a backup path");
+        assert!(bak.exists());
+        assert_eq!(std::fs::read_to_string(&bak).unwrap(), "original");
+        assert!(bak.to_string_lossy().ends_with(".bak"));
+        // The original is untouched.
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "original");
     }
 }

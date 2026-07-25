@@ -921,7 +921,8 @@ impl App {
             return;
         }
 
-        // Write every document. Load mode overwrites; new mode won't clobber.
+        // Write every document. Load mode overwrites (backing up first); new
+        // mode won't clobber an existing file.
         use crate::actions::system::SystemOps;
         for d in &self.docs {
             let mode = if matches!(d.kind, DocKind::Env) {
@@ -930,6 +931,13 @@ impl App {
                 0o644
             };
             let outcome = if self.is_load {
+                // Snapshot the existing file before overwriting it.
+                if let Ok(Some(bak)) = ops.backup(&d.path) {
+                    log.push(LogLine::new(
+                        crate::log::Level::Info,
+                        format!("Backed up to {}", bak.display()),
+                    ));
+                }
                 ops.write_file(&d.path, &d.text, mode).map(|_| false)
             } else {
                 ops.write_new(&d.path, &d.text)
