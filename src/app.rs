@@ -83,6 +83,10 @@ pub struct App {
 
     /// Suggested docker bind-mount toggles.
     pub docker_mounts: MountSelection,
+    /// Compose service-name prefix we manage (e.g. `arkime-`). Detected on load.
+    pub service_prefix: String,
+    /// Other prefixes found in a loaded compose — left untouched.
+    pub other_prefixes: Vec<String>,
 
     /// Whether the process is running as root. Native apply needs it; docker
     /// does not.
@@ -144,6 +148,8 @@ impl App {
             plugin_checked: vec![false; plugins::KNOWN_PLUGINS.len()],
             plugin_advanced: false,
             docker_mounts: MountSelection::default(),
+            service_prefix: docset::DEFAULT_PREFIX.to_string(),
+            other_prefixes: Vec::new(),
             is_root: crate::guards::is_root(),
             log: Vec::new(),
             applied: false,
@@ -660,12 +666,18 @@ impl App {
         let components = self.components;
         let mounts = self.docker_mounts.clone();
         let ba = self.basic_auth;
+        let prefix = self.service_prefix.clone();
         let images = Images::default();
         for d in &mut self.docs {
             d.text = match d.kind {
-                DocKind::Compose => {
-                    docset::render_compose(&d.text, &components, &answers, &mounts, &images)
-                }
+                DocKind::Compose => docset::render_compose(
+                    &d.text,
+                    &prefix,
+                    &components,
+                    &answers,
+                    &mounts,
+                    &images,
+                ),
                 DocKind::Env => docset::render_env(&d.text, &answers, ba),
                 ini => docset::render_ini(ini, &d.text, &answers, ba),
             };
@@ -724,8 +736,22 @@ impl App {
             Some(Deployment::Docker) => {
                 let text = std::fs::read_to_string(&path)?;
                 self.out_dir = Self::dir_of(&path);
+                // Detect the service prefix (arkime-/none/arkime6-/…) and manage
+                // only that set; other prefixes are preserved untouched.
+                match docset::detect_prefix(&text) {
+                    Some(det) => {
+                        self.service_prefix = det.prefix;
+                        self.other_prefixes = det.others;
+                    }
+                    None => {
+                        self.service_prefix = docset::DEFAULT_PREFIX.to_string();
+                        self.other_prefixes.clear();
+                    }
+                }
+                let prefix = self.service_prefix.clone();
                 docset::parse_compose(
                     &text,
+                    &prefix,
                     &mut self.components,
                     &mut self.answers,
                     &mut self.docker_mounts,
@@ -883,10 +909,12 @@ impl App {
             }
             // Parse understood fields back out of the (possibly edited) docs.
             let mut components = self.components;
+            let prefix = self.service_prefix.clone();
             for d in &self.docs {
                 match d.kind {
                     DocKind::Compose => docset::parse_compose(
                         &d.text,
+                        &prefix,
                         &mut components,
                         &mut self.answers,
                         &mut self.docker_mounts,

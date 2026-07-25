@@ -79,6 +79,7 @@ fn main() {
     };
     let compose = render_compose(
         "",
+        arkime_setup::docset::DEFAULT_PREFIX,
         &components,
         &answers,
         &MountSelection::default(),

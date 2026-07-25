@@ -299,8 +299,56 @@ fn set_env_key(text: &str, key: &str, value: Option<&str>) -> String {
 // COMPOSE (docker)
 // ---------------------------------------------------------------------------
 
-fn arkime_service_name(c: Component) -> String {
-    format!("arkime-{}", c.label())
+/// The default service-name prefix (`arkime-viewer`, `arkime-capture`, …).
+pub const DEFAULT_PREFIX: &str = "arkime-";
+
+fn arkime_service_name(prefix: &str, c: Component) -> String {
+    format!("{prefix}{}", c.label())
+}
+
+/// What we learned about the arkime service naming in a loaded compose.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrefixDetection {
+    /// The prefix we'll manage (the one used by the most services).
+    pub prefix: String,
+    /// Any other prefixes also present — left untouched.
+    pub others: Vec<String>,
+}
+
+/// Detect the prefix(es) the arkime services use. A service name counts if it
+/// ends with a component label after an empty / `-` / `_` separator (so
+/// `viewer`, `arkime-viewer`, `arkime6-viewer` all match, but `otherwise`
+/// doesn't). Returns the dominant prefix plus any others found.
+pub fn detect_prefix(text: &str) -> Option<PrefixDetection> {
+    let root: Value = serde_yml::from_str(text).ok()?;
+    let services = root.get("services").and_then(|v| v.as_mapping())?;
+
+    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for key in services.keys() {
+        let name = match key.as_str() {
+            Some(n) => n,
+            None => continue,
+        };
+        for c in Component::ALL {
+            if let Some(stem) = name.strip_suffix(c.label()) {
+                if stem.is_empty() || stem.ends_with('-') || stem.ends_with('_') {
+                    *counts.entry(stem.to_string()).or_default() += 1;
+                    break;
+                }
+            }
+        }
+    }
+    if counts.is_empty() {
+        return None;
+    }
+    // Dominant = most services (ties broken by BTreeMap order for determinism).
+    let prefix = counts
+        .iter()
+        .max_by_key(|(_, n)| **n)
+        .map(|(p, _)| p.clone())
+        .unwrap();
+    let others = counts.keys().filter(|p| **p != prefix).cloned().collect();
+    Some(PrefixDetection { prefix, others })
 }
 
 /// Merge our services into a compose document, preserving unknown services and
@@ -309,6 +357,7 @@ fn arkime_service_name(c: Component) -> String {
 /// exists.
 pub fn render_compose(
     base: &str,
+    prefix: &str,
     components: &Components,
     answers: &Answers,
     mounts: &MountSelection,
@@ -338,7 +387,7 @@ pub fn render_compose(
     let es_depends = answers.install_demo_es || services.contains_key(Value::from("elasticsearch"));
 
     for c in Component::ALL {
-        let key = Value::from(arkime_service_name(c));
+        let key = Value::from(arkime_service_name(prefix, c));
         if components.contains(c) {
             let mut svc = services
                 .get(&key)
@@ -472,6 +521,7 @@ fn port(svc: &mut Mapping, p: &str) {
 /// exist (-> components), demo backend presence, and capture/viewer mounts.
 pub fn parse_compose(
     text: &str,
+    prefix: &str,
     components: &mut Components,
     answers: &mut Answers,
     mounts: &mut MountSelection,
@@ -486,7 +536,7 @@ pub fn parse_compose(
     };
 
     for c in Component::ALL {
-        let present = services.contains_key(Value::from(arkime_service_name(c)));
+        let present = services.contains_key(Value::from(arkime_service_name(prefix, c)));
         set_component(components, c, present);
     }
     answers.install_demo_es = services.contains_key(Value::from("elasticsearch"));
@@ -507,8 +557,8 @@ pub fn parse_compose(
 
     // Mounts from whichever of capture/viewer exists.
     let svc = services
-        .get(Value::from("arkime-capture"))
-        .or_else(|| services.get(Value::from("arkime-viewer")))
+        .get(Value::from(arkime_service_name(prefix, Component::Capture)))
+        .or_else(|| services.get(Value::from(arkime_service_name(prefix, Component::Viewer))))
         .and_then(|v| v.as_mapping());
     if let Some(svc) = svc {
         let vols: Vec<String> = svc
@@ -637,6 +687,7 @@ mod tests {
         };
         let out = render_compose(
             base,
+            DEFAULT_PREFIX,
             &components,
             &answers(),
             &MountSelection::default(),
@@ -650,12 +701,13 @@ mod tests {
         let mut parsed = Components::default();
         let mut a = Answers::default();
         let mut m = MountSelection::default();
-        parse_compose(&out, &mut parsed, &mut a, &mut m);
+        parse_compose(&out, DEFAULT_PREFIX, &mut parsed, &mut a, &mut m);
         assert!(parsed.capture);
         // Toggling capture off removes only our service.
         components.capture = false;
         let out2 = render_compose(
             &out,
+            DEFAULT_PREFIX,
             &components,
             &answers(),
             &MountSelection::default(),
@@ -678,6 +730,7 @@ mod tests {
         };
         let out = render_compose(
             &out_default(&components, &a),
+            DEFAULT_PREFIX,
             &components,
             &a,
             &MountSelection::default(),
@@ -701,7 +754,7 @@ mod tests {
         let mut c = Components::default();
         let mut ans = Answers::default();
         let mut m = MountSelection::default();
-        parse_compose(&out, &mut c, &mut ans, &mut m);
+        parse_compose(&out, DEFAULT_PREFIX, &mut c, &mut ans, &mut m);
         assert!(ans.install_demo_es);
         assert_eq!(ans.es_data_dir, "/esdata");
     }
@@ -719,9 +772,60 @@ mod tests {
         assert!(!viewer.contains("ports:"));
     }
 
+    #[test]
+    fn detect_prefix_handles_variants() {
+        let two = "services:\n  arkime-viewer:\n    image: x\n  arkime-capture:\n    image: y\n";
+        let d = detect_prefix(two).unwrap();
+        assert_eq!(d.prefix, "arkime-");
+        assert!(d.others.is_empty());
+
+        let bare = "services:\n  viewer:\n    image: x\n";
+        assert_eq!(detect_prefix(bare).unwrap().prefix, "");
+
+        let custom = "services:\n  arkime6-viewer:\n    image: x\n";
+        assert_eq!(detect_prefix(custom).unwrap().prefix, "arkime6-");
+
+        // Two prefixes: dominant wins, the other is reported.
+        let mixed = "services:\n  arkime-viewer:\n    image: x\n  arkime-capture:\n    image: y\n  arkime6-wise:\n    image: z\n";
+        let d = detect_prefix(mixed).unwrap();
+        assert_eq!(d.prefix, "arkime-");
+        assert_eq!(d.others, vec!["arkime6-".to_string()]);
+
+        assert!(detect_prefix("services:\n  postgres:\n    image: p\n").is_none());
+    }
+
+    #[test]
+    fn render_respects_prefix_and_leaves_others_untouched() {
+        let base = "services:\n  arkime6-viewer:\n    image: keep-me\n";
+        let components = Components {
+            viewer: true,
+            ..Default::default()
+        };
+        // We manage the "arkime-" set; the arkime6- service must survive.
+        let out = render_compose(
+            base,
+            "arkime-",
+            &components,
+            &answers(),
+            &MountSelection::default(),
+            &Images::default(),
+        );
+        assert!(out.contains("arkime6-viewer"));
+        assert!(out.contains("keep-me"));
+        assert!(out.contains("arkime-viewer:"));
+
+        // Parsing with the same prefix sees our service, not the other one.
+        let mut c = Components::default();
+        let mut a = Answers::default();
+        let mut m = MountSelection::default();
+        parse_compose(&out, "arkime-", &mut c, &mut a, &mut m);
+        assert!(c.viewer);
+    }
+
     fn out_default(components: &Components, a: &Answers) -> String {
         render_compose(
             "",
+            DEFAULT_PREFIX,
             components,
             a,
             &MountSelection::default(),

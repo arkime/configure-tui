@@ -525,6 +525,16 @@ fn render_review(app: &App, f: &mut Frame, area: Rect) {
             mounts.join(", ")
         };
         lines.push(kv("Mounts", &text));
+
+        let prefix = if app.service_prefix.is_empty() {
+            "(none)"
+        } else {
+            &app.service_prefix
+        };
+        lines.push(kv("Service prefix", prefix));
+        if !app.other_prefixes.is_empty() {
+            lines.push(kv("Untouched prefixes", &app.other_prefixes.join(", ")));
+        }
     }
     // Native apply needs root; warn before the user tries.
     if app.deployment == Some(Deployment::Native) && !app.is_root {
