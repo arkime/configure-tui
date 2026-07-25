@@ -13,6 +13,9 @@ pub enum WizardStep {
     StartSelect,
     /// Path to the file being loaded (load modes only).
     LoadPath,
+    /// Choose which service-name prefix to manage (docker load, when a compose
+    /// contains more than one arkime prefix).
+    PrefixSelect,
     /// Multi-select toggles for capture/viewer/wise/parliament/cont3xt.
     ComponentsSelect,
     /// Interfaces to monitor (capture only).
@@ -48,12 +51,17 @@ pub enum WizardStep {
 pub fn required_steps(
     deployment: Option<Deployment>,
     is_load: bool,
+    multi_prefix: bool,
     components: &Components,
     wise_url_needed: bool,
 ) -> Vec<WizardStep> {
     let mut steps = vec![WizardStep::StartSelect];
     if is_load {
         steps.push(WizardStep::LoadPath);
+    }
+    // Only when a loaded compose has several arkime prefixes to choose between.
+    if multi_prefix {
+        steps.push(WizardStep::PrefixSelect);
     }
     steps.push(WizardStep::ComponentsSelect);
 
@@ -95,14 +103,22 @@ pub fn required_steps(
 
 /// Step after `current`, honoring the active selections. Returns `current` if it
 /// is the last step (defensive; callers normally stop at `Done`).
+#[allow(clippy::too_many_arguments)]
 pub fn next(
     current: WizardStep,
     deployment: Option<Deployment>,
     is_load: bool,
+    multi_prefix: bool,
     components: &Components,
     wise_url_needed: bool,
 ) -> WizardStep {
-    let steps = required_steps(deployment, is_load, components, wise_url_needed);
+    let steps = required_steps(
+        deployment,
+        is_load,
+        multi_prefix,
+        components,
+        wise_url_needed,
+    );
     match steps.iter().position(|&s| s == current) {
         Some(i) if i + 1 < steps.len() => steps[i + 1],
         // `current` may not be in the list if selections changed under it; fall
@@ -112,14 +128,22 @@ pub fn next(
 }
 
 /// Step before `current`. Returns `current` if it is the first step.
+#[allow(clippy::too_many_arguments)]
 pub fn prev(
     current: WizardStep,
     deployment: Option<Deployment>,
     is_load: bool,
+    multi_prefix: bool,
     components: &Components,
     wise_url_needed: bool,
 ) -> WizardStep {
-    let steps = required_steps(deployment, is_load, components, wise_url_needed);
+    let steps = required_steps(
+        deployment,
+        is_load,
+        multi_prefix,
+        components,
+        wise_url_needed,
+    );
     match steps.iter().position(|&s| s == current) {
         Some(i) if i > 0 => steps[i - 1],
         _ => current,
@@ -141,7 +165,7 @@ mod tests {
 
     #[test]
     fn native_capture_viewer_full_flow() {
-        let steps = required_steps(Some(Deployment::Native), false, &caps(), false);
+        let steps = required_steps(Some(Deployment::Native), false, false, &caps(), false);
         assert_eq!(
             steps,
             vec![
@@ -161,8 +185,21 @@ mod tests {
     }
 
     #[test]
+    fn prefix_select_appears_only_with_multi_prefix() {
+        let c = caps();
+        assert!(
+            required_steps(Some(Deployment::Docker), true, true, &c, false)
+                .contains(&WizardStep::PrefixSelect)
+        );
+        assert!(
+            !required_steps(Some(Deployment::Docker), true, false, &c, false)
+                .contains(&WizardStep::PrefixSelect)
+        );
+    }
+
+    #[test]
     fn docker_skips_geoip() {
-        let steps = required_steps(Some(Deployment::Docker), false, &caps(), false);
+        let steps = required_steps(Some(Deployment::Docker), false, false, &caps(), false);
         assert!(!steps.contains(&WizardStep::GeoIp));
         assert!(steps.contains(&WizardStep::Interfaces));
         assert!(steps.contains(&WizardStep::DockerMounts));
@@ -176,10 +213,12 @@ mod tests {
             capture: true,
             ..Default::default()
         };
-        assert!(required_steps(Some(Deployment::Native), false, &cap, true)
-            .contains(&WizardStep::WiseUrl));
         assert!(
-            !required_steps(Some(Deployment::Native), false, &cap, false)
+            required_steps(Some(Deployment::Native), false, false, &cap, true)
+                .contains(&WizardStep::WiseUrl)
+        );
+        assert!(
+            !required_steps(Some(Deployment::Native), false, false, &cap, false)
                 .contains(&WizardStep::WiseUrl)
         );
     }
@@ -190,7 +229,7 @@ mod tests {
             wise: true,
             ..Default::default()
         };
-        let steps = required_steps(Some(Deployment::Native), false, &wise, false);
+        let steps = required_steps(Some(Deployment::Native), false, false, &wise, false);
         assert!(!steps.contains(&WizardStep::Interfaces));
         assert!(!steps.contains(&WizardStep::S2sPassword));
         assert!(!steps.contains(&WizardStep::GeoIp));
@@ -204,7 +243,7 @@ mod tests {
             cont3xt: true,
             ..Default::default()
         };
-        let steps = required_steps(Some(Deployment::Native), false, &c, false);
+        let steps = required_steps(Some(Deployment::Native), false, false, &c, false);
         assert!(steps.contains(&WizardStep::Elasticsearch));
         assert!(steps.contains(&WizardStep::S2sPassword));
         assert!(!steps.contains(&WizardStep::Interfaces));
@@ -215,17 +254,20 @@ mod tests {
     fn next_and_prev_are_inverse_across_flow() {
         let d = Some(Deployment::Native);
         let c = caps();
-        let steps = required_steps(d, false, &c, true);
+        let steps = required_steps(d, false, false, &c, true);
         for win in steps.windows(2) {
-            assert_eq!(next(win[0], d, false, &c, true), win[1]);
-            assert_eq!(prev(win[1], d, false, &c, true), win[0]);
+            assert_eq!(next(win[0], d, false, false, &c, true), win[1]);
+            assert_eq!(prev(win[1], d, false, false, &c, true), win[0]);
         }
         // Ends are clamped.
         assert_eq!(
-            prev(WizardStep::StartSelect, d, false, &c, true),
+            prev(WizardStep::StartSelect, d, false, false, &c, true),
             WizardStep::StartSelect
         );
-        assert_eq!(next(WizardStep::Done, d, false, &c, true), WizardStep::Done);
+        assert_eq!(
+            next(WizardStep::Done, d, false, false, &c, true),
+            WizardStep::Done
+        );
     }
 
     #[test]
@@ -239,7 +281,7 @@ mod tests {
                     parliament: mask & 8 != 0,
                     cont3xt: mask & 16 != 0,
                 };
-                let steps = required_steps(Some(dep), false, &c, false);
+                let steps = required_steps(Some(dep), false, false, &c, false);
                 let review = steps.iter().position(|&s| s == WizardStep::Review).unwrap();
                 let progress = steps
                     .iter()

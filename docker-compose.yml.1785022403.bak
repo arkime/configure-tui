@@ -1,5 +1,5 @@
 services:
-  arkime1-capture:
+  arkime-capture:
     image: arkime/arkime:latest
     command: capture
     env_file:
@@ -16,7 +16,7 @@ services:
     - NET_RAW
     depends_on:
     - elasticsearch
-  arkime2-viewer:
+  arkime-viewer:
     image: arkime/arkime:latest
     command: viewer
     env_file:
@@ -30,7 +30,7 @@ services:
     network_mode: host
     depends_on:
     - elasticsearch
-  wise:
+  arkime-wise:
     image: arkime/arkime:latest
     command: wise
     env_file:

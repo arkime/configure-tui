@@ -88,7 +88,11 @@ pub struct App {
     pub docker_mounts: MountSelection,
     /// Compose service-name prefix we manage (e.g. `arkime-`). Detected on load.
     pub service_prefix: String,
-    /// Other prefixes found in a loaded compose — left untouched.
+    /// All prefixes found in a loaded compose (dominant first) — the choices on
+    /// the PrefixSelect screen when there is more than one.
+    pub detected_prefixes: Vec<String>,
+    /// Prefixes we are NOT managing (everything in `detected_prefixes` except the
+    /// chosen one) — left untouched.
     pub other_prefixes: Vec<String>,
 
     /// Whether the process is running as root. Native apply needs it; docker
@@ -152,6 +156,7 @@ impl App {
             plugin_advanced: false,
             docker_mounts: MountSelection::default(),
             service_prefix: docset::DEFAULT_PREFIX.to_string(),
+            detected_prefixes: Vec::new(),
             other_prefixes: Vec::new(),
             is_root: crate::guards::is_root(),
             log: Vec::new(),
@@ -163,10 +168,12 @@ impl App {
 
     fn advance(&mut self) {
         let w = self.wise_url_needed();
+        let mp = self.multi_prefix();
         self.step = steps::next(
             self.step,
             self.deployment,
             self.is_load,
+            mp,
             &self.components,
             w,
         );
@@ -176,15 +183,24 @@ impl App {
 
     fn retreat(&mut self) {
         let w = self.wise_url_needed();
+        let mp = self.multi_prefix();
         self.step = steps::prev(
             self.step,
             self.deployment,
             self.is_load,
+            mp,
             &self.components,
             w,
         );
         self.sync_docs();
         self.on_enter_step();
+    }
+
+    /// A loaded compose has more than one arkime prefix to choose between.
+    fn multi_prefix(&self) -> bool {
+        self.deployment == Some(Deployment::Docker)
+            && self.is_load
+            && self.detected_prefixes.len() > 1
     }
 
     /// The external WISE URL is only asked for when the wise.so plugin is
@@ -213,6 +229,14 @@ impl App {
                     };
                     self.fields.load_path = Input::new(default);
                 }
+            }
+            WizardStep::PrefixSelect => {
+                // Highlight the currently-chosen prefix.
+                self.cursor = self
+                    .detected_prefixes
+                    .iter()
+                    .position(|p| *p == self.service_prefix)
+                    .unwrap_or(0);
             }
             WizardStep::ComponentsSelect => self.cursor = 0,
             WizardStep::Interfaces => self.cursor = 0,
@@ -302,6 +326,7 @@ impl App {
         match self.step {
             WizardStep::StartSelect => self.key_start(key),
             WizardStep::LoadPath => self.key_load_path(key),
+            WizardStep::PrefixSelect => self.key_prefix_select(key),
             WizardStep::ComponentsSelect => self.key_components(key),
             WizardStep::Interfaces => self.key_interfaces(key),
             WizardStep::Elasticsearch => self.key_elasticsearch(key),
@@ -362,6 +387,52 @@ impl App {
                 self.fields.load_path.handle_event(&Event::Key(key));
             }
         }
+    }
+
+    /// Choose which arkime prefix to manage from a multi-prefix compose.
+    fn key_prefix_select(&mut self, key: KeyEvent) {
+        let n = self.detected_prefixes.len();
+        if n == 0 {
+            if key.code == KeyCode::Enter {
+                self.advance();
+            }
+            return;
+        }
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => self.cursor = (self.cursor + n - 1) % n,
+            KeyCode::Down | KeyCode::Char('j') => self.cursor = (self.cursor + 1) % n,
+            KeyCode::Enter => {
+                self.service_prefix = self.detected_prefixes[self.cursor].clone();
+                self.other_prefixes = self
+                    .detected_prefixes
+                    .iter()
+                    .filter(|p| **p != self.service_prefix)
+                    .cloned()
+                    .collect();
+                self.reparse_for_prefix();
+                self.advance();
+            }
+            _ => {}
+        }
+    }
+
+    /// Re-read the loaded compose under the chosen prefix so components, mounts
+    /// and ES reflect that deployment's services.
+    fn reparse_for_prefix(&mut self) {
+        let (text, prefix) = match self.docs.iter().find(|d| d.kind == DocKind::Compose) {
+            Some(d) => (d.text.clone(), self.service_prefix.clone()),
+            None => return,
+        };
+        self.components = Components::default();
+        self.docker_mounts = MountSelection::default();
+        docset::parse_compose(
+            &text,
+            &prefix,
+            &mut self.components,
+            &mut self.answers,
+            &mut self.docker_mounts,
+        );
+        self.sync_fields_from_answers();
     }
 
     fn key_components(&mut self, key: KeyEvent) {
@@ -753,10 +824,15 @@ impl App {
                 // only that set; other prefixes are preserved untouched.
                 match docset::detect_prefix(&text) {
                     Some(det) => {
+                        // Dominant first, then the others — the PrefixSelect list.
+                        let mut all = vec![det.prefix.clone()];
+                        all.extend(det.others.clone());
+                        self.detected_prefixes = all;
                         self.service_prefix = det.prefix;
                         self.other_prefixes = det.others;
                     }
                     None => {
+                        self.detected_prefixes.clear();
                         self.service_prefix = docset::DEFAULT_PREFIX.to_string();
                         self.other_prefixes.clear();
                     }
@@ -1389,6 +1465,42 @@ mod tests {
         // ...and the unknown var is preserved in the re-synced document.
         let env = a.docs.iter().find(|d| d.kind == DocKind::Env).unwrap();
         assert!(env.text.contains("MY_UNKNOWN=keep"));
+    }
+
+    #[test]
+    fn multi_prefix_compose_prompts_and_reparses() {
+        let dir = tempfile::tempdir().unwrap();
+        let compose = "services:\n  arkime1-viewer:\n    image: arkime/arkime\n  arkime2-capture:\n    image: arkime/arkime\n  wise:\n    image: arkime/arkime\n";
+        let path = dir.path().join("docker-compose.yml");
+        std::fs::write(&path, compose).unwrap();
+
+        let mut a = app();
+        a.deployment = Some(Deployment::Docker);
+        a.is_load = true;
+        a.step = WizardStep::LoadPath;
+        a.fields.load_path = Input::new(path.to_string_lossy().to_string());
+        a.load_from_path().unwrap();
+
+        // Three prefixes detected: "", arkime1-, arkime2-.
+        assert_eq!(a.detected_prefixes.len(), 3);
+        assert!(a.multi_prefix());
+
+        // Advancing from LoadPath lands on the prefix chooser.
+        a.advance();
+        assert_eq!(a.step, WizardStep::PrefixSelect);
+
+        // Choose arkime2- and confirm the component set re-parses to its services.
+        a.cursor = a
+            .detected_prefixes
+            .iter()
+            .position(|p| p == "arkime2-")
+            .unwrap();
+        press(&mut a, KeyCode::Enter);
+        assert_eq!(a.service_prefix, "arkime2-");
+        assert!(a.components.capture);
+        assert!(!a.components.viewer);
+        assert!(!a.components.wise);
+        assert_eq!(a.step, WizardStep::ComponentsSelect);
     }
 
     #[test]

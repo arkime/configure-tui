@@ -62,6 +62,7 @@ fn step_title(step: WizardStep) -> &'static str {
     match step {
         WizardStep::StartSelect => "Start",
         WizardStep::LoadPath => "Load file",
+        WizardStep::PrefixSelect => "Service prefix",
         WizardStep::ComponentsSelect => "Components",
         WizardStep::Interfaces => "Interfaces",
         WizardStep::Elasticsearch => "OpenSearch / Elasticsearch",
@@ -84,6 +85,7 @@ fn render_body(app: &App, f: &mut Frame, area: Rect) {
     match app.step {
         WizardStep::StartSelect => render_start(app, f, inner),
         WizardStep::LoadPath => render_load_path(app, f, inner),
+        WizardStep::PrefixSelect => render_prefix_select(app, f, inner),
         WizardStep::ComponentsSelect => render_components(app, f, inner),
         WizardStep::Interfaces => render_interfaces(app, f, inner),
         WizardStep::Elasticsearch => render_elasticsearch(app, f, inner),
@@ -142,6 +144,26 @@ fn render_load_path(app: &App, f: &mut Frame, area: Rect) {
         Line::from(""),
         field_line("path", app.fields.load_path.value(), true),
     ];
+    f.render_widget(Paragraph::new(lines), area);
+}
+
+fn render_prefix_select(app: &App, f: &mut Frame, area: Rect) {
+    let mut lines = vec![
+        Line::from("This compose has more than one arkime deployment."),
+        Line::from(Span::styled(
+            "Choose which service-name prefix to manage — the others are left untouched.",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(""),
+    ];
+    for (i, p) in app.detected_prefixes.iter().enumerate() {
+        let shown = if p.is_empty() {
+            "(no prefix)".to_string()
+        } else {
+            format!("{p}*")
+        };
+        lines.push(selectable(&shown, i == app.cursor));
+    }
     f.render_widget(Paragraph::new(lines), area);
 }
 
@@ -592,6 +614,7 @@ fn render_footer(app: &App, f: &mut Frame, area: Rect) {
     let help = match app.step {
         WizardStep::StartSelect => "↑↓ choose · →/Enter select · Esc quit",
         WizardStep::LoadPath => "type path · Enter load · Esc back",
+        WizardStep::PrefixSelect => "↑↓ choose · →/Enter select · ←/Esc back",
         WizardStep::ComponentsSelect => "↑↓ move · space toggle · →/Enter next · ←/Esc back",
         WizardStep::Interfaces => {
             if app.interface_advanced {

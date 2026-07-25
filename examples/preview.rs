@@ -41,6 +41,17 @@ fn main() {
     );
     println!("=== Start screen (4 modes) ===\n{}", render(&app));
 
+    // Prefix-select screen (multi-prefix compose on load).
+    app.deployment = Some(Deployment::Docker);
+    app.is_load = true;
+    app.detected_prefixes = vec!["".into(), "arkime1-".into(), "arkime2-".into()];
+    app.cursor = 2;
+    app.step = WizardStep::PrefixSelect;
+    println!("=== Prefix select screen ===\n{}", render(&app));
+    app.deployment = None;
+    app.is_load = false;
+    app.detected_prefixes.clear();
+
     app.components.capture = true;
     app.components.viewer = true;
     app.step = WizardStep::ComponentsSelect;
