@@ -45,13 +45,20 @@ Every output file (`docker-compose.yml` + `arkime.env`, or `config.ini` /
 merge the understood fields into it while **preserving everything we don't
 understand** (unknown compose services/keys, unknown `ARKIME__*` vars, unknown
 ini keys). **Nothing is written to disk until the final apply** (load modes
-overwrite the loaded file; new modes never clobber an existing one).
+overwrite the loaded file — after backing it up to a timestamped `.bak` — and
+new modes never clobber an existing one).
 
 Press **`^E`** (Ctrl-E) at any time — or `e` on a non-typing screen — to open a
 full-file editor with a **tab per file** (`Tab`/`Shift-Tab` cycles). Edit the
 fully-substituted text freely; on exit (`Esc`) the understood fields are parsed
 back into the wizard. Editor and wizard are two views of the same data,
-last-write-wins.
+last-write-wins. **`^D`** shows a **diff** of the current file vs its original —
+handy from the Review screen to see exactly what will change before writing.
+
+When loading a `docker-compose.yml`, the tool detects the **service-name
+prefix** (`arkime-viewer` vs `viewer` vs `arkime6-viewer`), round-trips it, and
+if several prefixes coexist it manages only the dominant set and leaves the
+others untouched.
 
 Docker mode suggests these host mounts (all on by default, individually
 toggleable), attached to the capture/viewer services:

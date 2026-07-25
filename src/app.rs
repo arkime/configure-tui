@@ -40,6 +40,9 @@ pub struct Fields {
 pub struct Editor {
     pub tab: usize,
     pub areas: Vec<TextArea<'static>>,
+    /// When true the active tab shows a diff (original vs current) instead of
+    /// the editable buffer.
+    pub diff: bool,
 }
 
 pub struct App {
@@ -242,11 +245,20 @@ impl App {
             return;
         }
         // Ctrl+E opens the editor anywhere; plain 'e' on non-typing screens.
-        let ctrl_e =
-            key.code == KeyCode::Char('e') && key.modifiers.contains(KeyModifiers::CONTROL);
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let ctrl_e = key.code == KeyCode::Char('e') && ctrl;
         let plain_e = matches!(key.code, KeyCode::Char('e')) && !self.screen_is_text_input();
         if ctrl_e || plain_e {
             self.open_editor();
+            return;
+        }
+        // Ctrl+D jumps straight to the diff view (e.g. from Review, to see what
+        // will change before writing).
+        if key.code == KeyCode::Char('d') && ctrl {
+            self.open_editor();
+            if let Some(ed) = &mut self.editor {
+                ed.diff = true;
+            }
             return;
         }
         // Esc always goes back a screen (quit on the first screen / after apply).
@@ -656,6 +668,7 @@ impl App {
                 self.docs.push(Document {
                     kind: *kind,
                     path,
+                    original: base.clone(),
                     text: base,
                 });
             }
@@ -764,6 +777,7 @@ impl App {
                 self.docs.push(Document {
                     kind: DocKind::Compose,
                     path: self.out_dir.join(compose_name),
+                    original: text.clone(),
                     text,
                 });
                 // Sibling env file, if present.
@@ -773,6 +787,7 @@ impl App {
                 self.docs.push(Document {
                     kind: DocKind::Env,
                     path: env_path,
+                    original: env_text.clone(),
                     text: env_text,
                 });
             }
@@ -805,6 +820,7 @@ impl App {
                         self.docs.push(Document {
                             kind,
                             path: p,
+                            original: text.clone(),
                             text,
                         });
                     }
@@ -878,19 +894,27 @@ impl App {
             .iter()
             .map(|d| TextArea::from(d.text.lines().collect::<Vec<_>>()))
             .collect();
-        self.editor = Some(Editor { tab: 0, areas });
+        self.editor = Some(Editor {
+            tab: 0,
+            areas,
+            diff: false,
+        });
     }
 
     fn editor_key(&mut self, key: KeyEvent) {
         let ed = self.editor.as_mut().unwrap();
         let n = ed.areas.len();
-        let ctrl_e =
-            key.code == KeyCode::Char('e') && key.modifiers.contains(KeyModifiers::CONTROL);
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let ctrl_e = key.code == KeyCode::Char('e') && ctrl;
+        let ctrl_d = key.code == KeyCode::Char('d') && ctrl;
         match key.code {
             KeyCode::Esc => self.close_editor(),
             _ if ctrl_e => self.close_editor(),
+            _ if ctrl_d => ed.diff = !ed.diff,
             KeyCode::Tab => ed.tab = (ed.tab + 1) % n,
             KeyCode::BackTab => ed.tab = (ed.tab + n - 1) % n,
+            // The diff view is read-only.
+            _ if ed.diff => {}
             _ => {
                 ed.areas[ed.tab].input(key);
             }

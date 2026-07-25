@@ -584,8 +584,10 @@ fn render_footer(app: &App, f: &mut Frame, area: Rect) {
     // Every screen (once files exist) offers the editor via ^E.
     let edit = if app.docs.is_empty() {
         ""
+    } else if app.step == WizardStep::Review {
+        " · ^E edit · ^D diff changes"
     } else {
-        " · ^E edit files"
+        " · ^E edit · ^D diff"
     };
     let help = match app.step {
         WizardStep::StartSelect => "↑↓ choose · →/Enter select · Esc quit",
@@ -654,8 +656,9 @@ fn render_editor(app: &App, f: &mut Frame) {
         .split(area);
 
     // Tab bar.
+    let mode = if ed.diff { " DIFF " } else { " EDIT " };
     let mut spans = vec![Span::styled(
-        " EDIT ",
+        mode,
         Style::default()
             .fg(Color::Black)
             .bg(ACCENT)
@@ -675,17 +678,61 @@ fn render_editor(app: &App, f: &mut Frame) {
     }
     f.render_widget(Paragraph::new(Line::from(spans)), chunks[0]);
 
-    // Active text area.
-    if let Some(area_w) = ed.areas.get(ed.tab) {
+    // Body: a diff (original vs current) or the editable buffer.
+    if ed.diff {
+        let original = app
+            .docs
+            .get(ed.tab)
+            .map(|d| d.original.as_str())
+            .unwrap_or("");
+        let current = ed
+            .areas
+            .get(ed.tab)
+            .map(|a| a.lines().join("\n"))
+            .unwrap_or_default();
+        f.render_widget(
+            Paragraph::new(diff_lines(original, &current)).wrap(Wrap { trim: false }),
+            chunks[1],
+        );
+    } else if let Some(area_w) = ed.areas.get(ed.tab) {
         f.render_widget(area_w, chunks[1]);
     }
 
+    let hint = if ed.diff {
+        "Tab/Shift-Tab switch file · ^D back to edit · Esc/^E done"
+    } else {
+        "Tab/Shift-Tab switch file · edit freely · ^D diff · Esc/^E done (syncs to wizard)"
+    };
     f.render_widget(
-        Paragraph::new(Span::styled(
-            "Tab/Shift-Tab switch file · edit freely · Esc/^E done (syncs back to wizard)",
-            Style::default().fg(Color::DarkGray),
-        ))
-        .block(Block::default().borders(Borders::TOP)),
+        Paragraph::new(Span::styled(hint, Style::default().fg(Color::DarkGray)))
+            .block(Block::default().borders(Borders::TOP)),
         chunks[2],
     );
+}
+
+/// Unified line diff (original vs current) for the editor's diff view.
+fn diff_lines(original: &str, current: &str) -> Vec<Line<'static>> {
+    use similar::{ChangeTag, TextDiff};
+    let diff = TextDiff::from_lines(original, current);
+    let mut out = Vec::new();
+    let mut changed = false;
+    for change in diff.iter_all_changes() {
+        let (sign, style) = match change.tag() {
+            ChangeTag::Delete => ("-", Style::default().fg(Color::Red)),
+            ChangeTag::Insert => ("+", Style::default().fg(Color::Green)),
+            ChangeTag::Equal => (" ", Style::default().fg(Color::DarkGray)),
+        };
+        if change.tag() != ChangeTag::Equal {
+            changed = true;
+        }
+        let text = change.value().trim_end_matches('\n').to_string();
+        out.push(Line::from(Span::styled(format!("{sign}{text}"), style)));
+    }
+    if !changed {
+        out.push(Line::from(Span::styled(
+            "(no changes from the original)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    out
 }

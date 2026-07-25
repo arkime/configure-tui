@@ -69,6 +69,8 @@ pub struct Document {
     /// Where it will be written (native: <etc>/x.ini; docker: <out_dir>/x).
     pub path: PathBuf,
     pub text: String,
+    /// The text at load/creation time — the baseline for the editor's diff view.
+    pub original: String,
 }
 
 const ENV_FILE: &str = "arkime.env";

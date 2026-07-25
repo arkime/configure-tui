@@ -121,4 +121,13 @@ fn main() {
         "=== Editor overlay (docker-compose.yml tab) ===\n{}",
         render(&app)
     );
+
+    // Diff view: pretend the compose was loaded with a bridge network, so the
+    // change to host networking shows up as a diff.
+    let bridged = app.docs[0]
+        .text
+        .replace("network_mode: host", "network_mode: bridge");
+    app.docs[0].original = bridged;
+    app.editor.as_mut().unwrap().diff = true;
+    println!("=== Editor diff view (^D) ===\n{}", render(&app));
 }
