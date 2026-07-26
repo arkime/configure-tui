@@ -1,0 +1,7 @@
+/target
+.git
+.github
+*.bak
+docker-compose.yml
+arkime.env
+GeoIP.conf

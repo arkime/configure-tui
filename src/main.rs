@@ -27,7 +27,10 @@ fn parse_args() -> Result<Option<Cli>> {
                 return Ok(None);
             }
             "-V" | "--version" => {
-                println!("arkime-setup {}", env!("CARGO_PKG_VERSION"));
+                // RELEASE_VERSION is baked in from the git tag by the release
+                // workflow; otherwise fall back to the crate version.
+                let version = option_env!("RELEASE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
+                println!("Configure-tui {version}");
                 return Ok(None);
             }
             "--install-dir" => {
@@ -50,8 +53,8 @@ fn parse_args() -> Result<Option<Cli>> {
 
 fn print_help() {
     println!(
-        "arkime-setup — configure an Arkime installation (native or docker)\n\n\
-         USAGE:\n    arkime-setup [OPTIONS]\n\n\
+        "Configure-tui — configure an Arkime installation (native or docker)\n\n\
+         USAGE:\n    Configure-tui [OPTIONS]\n\n\
          OPTIONS:\n\
          \x20   --install-dir <PATH>   Override the install dir (default /opt/arkime)\n\
          \x20   --name <NAME>          Override the product name (default arkime)\n\

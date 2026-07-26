@@ -5,10 +5,10 @@ edition = "2021"
 description = "Interactive TUI to configure an Arkime installation (native or docker)"
 license = "Apache-2.0"
 
-# The installed binary replaces the old bash `Configure` script, so name it that
-# when packaging. During development the crate/bin is `arkime-setup`.
+# The shipped binary is `Configure-tui` — it sits alongside the existing
+# `Configure` in /opt/arkime/bin. The crate/repo stays `setup-tui`.
 [[bin]]
-name = "arkime-setup"
+name = "Configure-tui"
 path = "src/main.rs"
 
 [dependencies]

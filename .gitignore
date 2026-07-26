@@ -1,3 +1,13 @@
 /target
 # Cargo.lock is intentionally committed: this is a binary built into packages,
 # so we want reproducible dependency versions.
+
+# Artifacts written when running the tool from the repo dir
+/docker-compose.yml
+/arkime.env
+GeoIP.conf
+*.bak
+
+# Editor swap files
+*.swp
+.*.swp

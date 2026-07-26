@@ -3,53 +3,117 @@ name: release
 on:
   push:
     tags: ["v*"]
-  workflow_dispatch:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
-  build:
+  # Build a static per-arch binary and attach it to the GitHub release.
+  binaries:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runs-on }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-musl
-            arch: x86_64
-          - target: aarch64-unknown-linux-musl
-            arch: aarch64
-    runs-on: ubuntu-latest
+          - name: linux-amd64
+            runs-on: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            musl: true
+          - name: linux-arm64
+            runs-on: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            musl: true
+          - name: macos-arm64
+            runs-on: macos-14
+            target: aarch64-apple-darwin
+            musl: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install cross
-        run: cargo install cross --locked
-      - name: Build static binary
-        run: cross build --release --target ${{ matrix.target }}
-      - name: Stage artifact
-        run: |
-          bin="target/${{ matrix.target }}/release/arkime-setup"
-          out="arkime-setup-${{ matrix.arch }}"
-          cp "$bin" "$out"
-          sha256sum "$out" > "$out.sha256"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: arkime-setup-${{ matrix.arch }}
-          path: |
-            arkime-setup-${{ matrix.arch }}
-            arkime-setup-${{ matrix.arch }}.sha256
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - name: Install musl toolchain
+        if: matrix.musl
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Version from tag
+        shell: bash
+        run: echo "RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build
+        env:
+          # Native musl builds need the musl linker (musl-tools provides it).
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Stage artifact
+        shell: bash
+        run: |
+          bin="target/${{ matrix.target }}/release/Configure-tui"
+          out="Configure-tui-${{ matrix.name }}"
+          cp "$bin" "$out"
+          shasum -a 256 "$out" > "$out.sha256"
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           files: |
-            arkime-setup-x86_64
-            arkime-setup-x86_64.sha256
-            arkime-setup-aarch64
-            arkime-setup-aarch64.sha256
+            Configure-tui-${{ matrix.name }}
+            Configure-tui-${{ matrix.name }}.sha256
+
+  # Build & push per-arch container images to ghcr (plain docker, no marketplace
+  # actions beyond the pinned checkout).
+  docker:
+    name: docker-${{ matrix.arch }}
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs-on: ubuntu-24.04
+            arch: amd64
+          - runs-on: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Version from tag
+        shell: bash
+        run: echo "RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Log in to ghcr
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build & push arch image
+        run: |
+          img="ghcr.io/${{ github.repository_owner }}/configure-tui"
+          docker build -t "${img}:${RELEASE_VERSION}-${{ matrix.arch }}" .
+          docker push "${img}:${RELEASE_VERSION}-${{ matrix.arch }}"
+
+  # Combine the arch images into multi-arch :version and :latest manifests.
+  docker-manifest:
+    needs: docker
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Version from tag
+        shell: bash
+        run: echo "RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Log in to ghcr
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Push manifests
+        run: |
+          img="ghcr.io/${{ github.repository_owner }}/configure-tui"
+          for tag in "${RELEASE_VERSION}" latest; do
+            docker manifest create "${img}:${tag}" \
+              "${img}:${RELEASE_VERSION}-amd64" \
+              "${img}:${RELEASE_VERSION}-arm64"
+            docker manifest push "${img}:${tag}"
+          done
