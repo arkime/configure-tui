@@ -1,6 +1,8 @@
 //! Everything the wizard collects from the admin. Filled in step by step; read
 //! by the templating (native) and docker generators at Apply time.
 
+use crate::domain::EsBackend;
+
 #[derive(Debug, Clone, Default)]
 pub struct Answers {
     /// Semicolon-separated interface list, matching Arkime's `interface=` value.
@@ -13,12 +15,12 @@ pub struct Answers {
     pub es_password: String,
     /// S2S / encryption secret (`passwordSecret`). Required for capture/viewer.
     pub s2s_password: String,
-    /// Whether to stand up a single-node Elasticsearch we configure. In native
-    /// mode this triggers a package install; in docker mode it adds a compose
-    /// service (with a bind-mounted data dir — see `es_data_dir`).
-    pub install_demo_es: bool,
-    /// Host data directory for the docker single-node Elasticsearch (compose
-    /// volume, not an env var). Only used when `install_demo_es` in docker mode.
+    /// Which single-node datastore to stand up (or None = external cluster). In
+    /// native mode a non-None value triggers a demo package install; in docker
+    /// it adds the matching compose service.
+    pub es_backend: EsBackend,
+    /// Host data directory for the docker single-node backend (compose volume,
+    /// not an env var). Only used when `es_backend` is set in docker mode.
     pub es_data_dir: String,
     /// Whether to download GeoIP files (native mode only).
     pub download_geoip: bool,

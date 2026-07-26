@@ -5,9 +5,10 @@
 
 use crate::actions::system::SystemOps;
 use crate::domain::{
-    Answers, BuildConfig, Component, Components, Os, Platform, ServiceManagerKind,
+    Answers, BuildConfig, Component, Components, EsBackend, Os, Platform, ServiceManagerKind,
 };
 use crate::log::{Level, LogLine};
+use anyhow::Result;
 use std::path::Path;
 
 /// The limits.d contents, verbatim from Configure lines 231-234.
@@ -46,9 +47,9 @@ pub fn system_actions(
         }
     }
 
-    // 2b. Optional local demo OpenSearch/Elasticsearch (bash lines 205-225).
-    if answers.install_demo_es && (components.capture || components.viewer) {
-        install_demo_es(ops, log);
+    // 2b. Optional single-node datastore (demo, not for production).
+    if answers.es_backend.is_some() && (components.capture || components.viewer) {
+        install_backend(answers.es_backend, ops, log);
     }
 
     // 3. limits.d (Linux only, and only if the dir exists — bash line 228).
@@ -183,51 +184,97 @@ fn report_service(log: &mut Vec<LogLine>, svc: &str, r: anyhow::Result<()>) {
     }
 }
 
-/// Demo OSS Elasticsearch install, mirroring bash lines 205-225: RPM distros use
-/// `yum install <url>`; others `curl` the `.deb` and `dpkg -i`. NOT for
-/// production — the prompt says so.
+/// Demo single-node install (NOT for production). Elasticsearch uses the OSS
+/// 7.10.2 package (no security); OpenSearch uses a 2.x bundle with the security
+/// plugin disabled and single-node discovery appended to its config.
 const ES_VERSION: &str = "7.10.2";
+const OPENSEARCH_VERSION: &str = "2.19.1";
 
-fn install_demo_es(ops: &dyn SystemOps, log: &mut Vec<LogLine>) {
+fn install_backend(backend: EsBackend, ops: &dyn SystemOps, log: &mut Vec<LogLine>) {
+    let is_rpm =
+        Path::new("/etc/redhat-release").exists() || Path::new("/etc/system-release").exists();
+    let result = match backend {
+        EsBackend::Elasticsearch => install_elasticsearch(is_rpm, ops, log),
+        EsBackend::OpenSearch => install_opensearch(is_rpm, ops, log),
+        EsBackend::None => return,
+    };
+    match result {
+        Ok(()) => log.push(LogLine::new(
+            Level::Info,
+            format!("Installed single-node {} (demo)", backend.short()),
+        )),
+        Err(e) => log.push(LogLine::new(
+            Level::Warn,
+            format!("{} install: {e}", backend.short()),
+        )),
+    }
+}
+
+fn install_elasticsearch(is_rpm: bool, ops: &dyn SystemOps, log: &mut Vec<LogLine>) -> Result<()> {
     let (arch_rpm, arch_deb) = match std::env::consts::ARCH {
         "x86_64" => ("x86_64", "amd64"),
         "aarch64" => ("aarch64", "arm64"),
         other => {
             log.push(LogLine::new(
                 Level::Warn,
-                format!("Demo ES: unsupported arch {other}, skipping"),
+                format!("unsupported arch {other}"),
             ));
-            return;
+            return Ok(());
         }
     };
-
     let base = "https://artifacts.elastic.co/downloads/elasticsearch";
-    let is_rpm =
-        Path::new("/etc/redhat-release").exists() || Path::new("/etc/system-release").exists();
-
-    log.push(LogLine::new(
-        Level::Info,
-        "Installing demo OSS Elasticsearch (not for production)".into(),
-    ));
-
-    let result = if is_rpm {
-        let url = format!("{base}/elasticsearch-oss-{ES_VERSION}-{arch_rpm}.rpm");
-        ops.run("yum", &["install", "-y", &url])
+    if is_rpm {
+        ops.run(
+            "yum",
+            &[
+                "install",
+                "-y",
+                &format!("{base}/elasticsearch-oss-{ES_VERSION}-{arch_rpm}.rpm"),
+            ],
+        )
     } else {
         let file = format!("elasticsearch-oss-{ES_VERSION}-{arch_deb}.deb");
-        let url = format!("{base}/{file}");
-        ops.run("curl", &["-sSfLO", &url])
+        ops.run("curl", &["-sSfLO", &format!("{base}/{file}")])
             .and_then(|_| ops.run("dpkg", &["-i", &file]))
             .and_then(|_| ops.run("rm", &["-f", &file]))
-    };
-
-    match result {
-        Ok(()) => log.push(LogLine::new(
-            Level::Info,
-            "Demo Elasticsearch installed".into(),
-        )),
-        Err(e) => log.push(LogLine::new(Level::Warn, format!("Demo ES install: {e}"))),
     }
+}
+
+fn install_opensearch(is_rpm: bool, ops: &dyn SystemOps, log: &mut Vec<LogLine>) -> Result<()> {
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        other => {
+            log.push(LogLine::new(
+                Level::Warn,
+                format!("unsupported arch {other}"),
+            ));
+            return Ok(());
+        }
+    };
+    let base = "https://artifacts.opensearch.org/releases/bundle/opensearch";
+    let ext = if is_rpm { "rpm" } else { "deb" };
+    let file = format!("opensearch-{OPENSEARCH_VERSION}-linux-{arch}.{ext}");
+    let url = format!("{base}/{OPENSEARCH_VERSION}/{file}");
+    // Disable the security demo config during install, then force single-node +
+    // security-disabled in opensearch.yml.
+    let install = if is_rpm {
+        format!("DISABLE_INSTALL_DEMO_CONFIG=true yum install -y {url}")
+    } else {
+        format!(
+            "curl -sSfLO {url} && DISABLE_INSTALL_DEMO_CONFIG=true dpkg -i {file}; rm -f {file}"
+        )
+    };
+    ops.run("sh", &["-c", &install]).and_then(|_| {
+        ops.run(
+            "sh",
+            &[
+                "-c",
+                "printf 'discovery.type: single-node\\nplugins.security.disabled: true\\n' \
+                 >> /etc/opensearch/opensearch.yml",
+            ],
+        )
+    })
 }
 
 #[cfg(test)]

@@ -6,7 +6,8 @@ use arkime_setup::app::App;
 use arkime_setup::config::substitute::BasicAuthEncoding;
 use arkime_setup::docset::{render_compose, render_env, Images};
 use arkime_setup::domain::{
-    Answers, BuildConfig, Components, Deployment, MountSelection, Os, Platform, ServiceManagerKind,
+    Answers, BuildConfig, Components, Deployment, EsBackend, MountSelection, Os, Platform,
+    ServiceManagerKind,
 };
 use arkime_setup::steps::WizardStep;
 use arkime_setup::ui;
@@ -90,7 +91,7 @@ fn main() {
         es_user: "admin".into(),
         es_password: "pass".into(),
         s2s_password: "secret".into(),
-        install_demo_es: true,
+        es_backend: EsBackend::Elasticsearch,
         es_data_dir: "/esdata".into(),
         plugins: "wise.so;ja4plus.amd64.so;entropy.so".into(),
         ..Default::default()
@@ -132,6 +133,15 @@ fn main() {
     app.cursor = 0;
     app.step = WizardStep::DockerMounts;
     println!("=== Docker mounts screen ===\n{}", render(&app));
+
+    // Elasticsearch/backend screen (docker, OpenSearch chosen).
+    app.deployment = Some(Deployment::Docker);
+    app.answers.es_backend = EsBackend::OpenSearch;
+    app.fields.es_url = tui_input::Input::new("https://localhost:9200".into());
+    app.fields.es_data = tui_input::Input::new("/arkime/esdata".into());
+    app.es_focus = 3;
+    app.step = WizardStep::Elasticsearch;
+    println!("=== Datastore screen (backend cycle) ===\n{}", render(&app));
 
     // GeoIP form (MaxMind creds).
     app.deployment = Some(Deployment::Native);

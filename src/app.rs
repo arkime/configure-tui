@@ -574,7 +574,7 @@ impl App {
     /// Whether the ES screen shows the extra "data dir" field (docker + we run
     /// the single-node ES).
     fn es_shows_data_dir(&self) -> bool {
-        self.deployment == Some(Deployment::Docker) && self.answers.install_demo_es
+        self.deployment == Some(Deployment::Docker) && self.answers.es_backend.is_some()
     }
 
     /// Interfaces screen: a checkbox list of detected NICs, or an advanced
@@ -786,14 +786,15 @@ impl App {
     }
 
     fn key_elasticsearch(&mut self, key: KeyEvent) {
-        // Fields: 0 url, 1 user, 2 password, 3 single-node toggle, 4 data dir
-        // (only shown in docker when the single-node ES is on).
+        // Fields: 0 url, 1 user, 2 password, 3 backend choice, 4 data dir
+        // (only shown in docker when a single-node backend is chosen).
         let max_focus = if self.es_shows_data_dir() { 4 } else { 3 };
         match key.code {
             KeyCode::Up => self.es_focus = self.es_focus.saturating_sub(1),
             KeyCode::Down | KeyCode::Tab => self.es_focus = (self.es_focus + 1).min(max_focus),
             KeyCode::Char(' ') if self.es_focus == 3 => {
-                self.answers.install_demo_es = !self.answers.install_demo_es;
+                // Cycle None -> OpenSearch -> Elasticsearch -> None.
+                self.answers.es_backend = self.answers.es_backend.cycle();
                 if !self.es_shows_data_dir() && self.es_focus > 3 {
                     self.es_focus = 3;
                 }
@@ -1422,7 +1423,7 @@ impl App {
                         .map(|c| format!("{}{}", self.service_prefix, c.label()))
                         .unwrap_or_else(|| format!("{}capture", self.service_prefix))
                 };
-                let es = if self.answers.install_demo_es {
+                let es = if self.answers.es_backend.is_some() {
                     Answers::SINGLE_NODE_ES_URL.to_string()
                 } else {
                     self.answers.elasticsearch_or_default().to_string()

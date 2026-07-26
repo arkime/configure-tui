@@ -13,13 +13,14 @@ use crate::config::substitute::{
 };
 use crate::config::templates::{load_sample, SampleKind};
 use crate::domain::mounts::MountKind;
-use crate::domain::{Answers, Component, Components, MountSelection};
+use crate::domain::{Answers, Component, Components, EsBackend, MountSelection};
 use serde_yml::{Mapping, Value};
 use std::path::{Path, PathBuf};
 
 /// Container images used when materializing docker services.
 pub struct Images {
     pub arkime: String,
+    pub opensearch: String,
     pub elasticsearch: String,
 }
 
@@ -27,6 +28,7 @@ impl Default for Images {
     fn default() -> Self {
         Images {
             arkime: "arkime/arkime:latest".into(),
+            opensearch: "opensearchproject/opensearch:2".into(),
             elasticsearch: "elasticsearch:8.19.19".into(),
         }
     }
@@ -227,8 +229,8 @@ fn env_pairs() -> [(&'static str, EnvGetter); 9] {
             (!a.interfaces.is_empty()).then(|| a.interfaces.clone())
         }),
         ("ARKIME__elasticsearch", |a, _| {
-            // When we run the single-node ES, point at it (host net, no TLS).
-            if a.install_demo_es {
+            // When we run a single-node backend, point at it (host net, no TLS).
+            if a.es_backend.is_some() {
                 Some(Answers::SINGLE_NODE_ES_URL.to_string())
             } else {
                 Some(a.elasticsearch_or_default().to_string())
@@ -436,7 +438,15 @@ pub fn render_compose(
         }
     };
 
-    let es_depends = answers.install_demo_es || services.contains_key(Value::from("elasticsearch"));
+    let backend = answers.es_backend;
+    let backend_svc = backend.service_name();
+    // Depend on our backend service, or an existing opensearch/elasticsearch one.
+    let dep_name = backend_svc.map(str::to_string).or_else(|| {
+        ["opensearch", "elasticsearch"]
+            .into_iter()
+            .find(|n| services.contains_key(Value::from(*n)))
+            .map(str::to_string)
+    });
 
     for c in Component::ALL {
         let key = Value::from(arkime_service_name(prefix, c));
@@ -445,24 +455,23 @@ pub fn render_compose(
                 .get(&key)
                 .and_then(|v| v.as_mapping().cloned())
                 .unwrap_or_default();
-            fill_arkime_service(&mut svc, c, images, es_depends, mounts, components);
+            fill_arkime_service(&mut svc, c, images, dep_name.as_deref(), mounts, components);
             services.insert(key, Value::Mapping(svc));
         } else {
             services.remove(&key);
         }
     }
 
-    // Single-node Elasticsearch we configure (added if not already present).
-    if answers.install_demo_es && !services.contains_key(Value::from("elasticsearch")) {
-        let data_dir = if answers.es_data_dir.is_empty() {
-            Answers::DEFAULT_ES_DATA_DIR
-        } else {
-            &answers.es_data_dir
-        };
-        services.insert(
-            Value::from("elasticsearch"),
-            elasticsearch_service(images, data_dir),
-        );
+    // Single-node backend we configure (added if not already present).
+    if let Some(name) = backend_svc {
+        if !services.contains_key(Value::from(name)) {
+            let data_dir = if answers.es_data_dir.is_empty() {
+                Answers::DEFAULT_ES_DATA_DIR
+            } else {
+                &answers.es_data_dir
+            };
+            services.insert(Value::from(name), es_service(backend, images, data_dir));
+        }
     }
 
     serde_yml::to_string(&root).unwrap_or_else(|e| format!("# serialization error: {e}\n"))
@@ -472,7 +481,7 @@ fn fill_arkime_service(
     svc: &mut Mapping,
     c: Component,
     images: &Images,
-    es_depends: bool,
+    es_dep: Option<&str>,
     mounts: &MountSelection,
     components: &Components,
 ) {
@@ -488,10 +497,11 @@ fn fill_arkime_service(
         set_seq(svc, "volumes", &binds);
     }
 
-    if es_depends {
-        set_seq(svc, "depends_on", &["elasticsearch".to_string()]);
-    } else {
-        svc.remove(Value::from("depends_on"));
+    match es_dep {
+        Some(name) => set_seq(svc, "depends_on", &[name.to_string()]),
+        None => {
+            svc.remove(Value::from("depends_on"));
+        }
     }
 
     match c {
@@ -517,26 +527,38 @@ fn fill_arkime_service(
     }
 }
 
-/// A single-node Elasticsearch service, matching the shape Arkime deployments
-/// use: host networking, security disabled, memlock unlimited, and a
-/// bind-mounted data dir. Heap is intentionally NOT pinned — modern ES
-/// auto-sizes the JVM heap from the container's memory.
-fn elasticsearch_service(images: &Images, data_dir: &str) -> Value {
+/// A single-node OpenSearch or Elasticsearch service: host networking, security
+/// disabled, memlock unlimited, and a bind-mounted data dir. Heap is not pinned
+/// — both auto-size the JVM heap from the container's memory.
+fn es_service(backend: EsBackend, images: &Images, data_dir: &str) -> Value {
     let mut m = Mapping::new();
-    set_str(&mut m, "container_name", "elasticsearch");
-    set_str(&mut m, "image", &images.elasticsearch);
+    let name = backend.service_name().unwrap_or("elasticsearch");
+    set_str(&mut m, "container_name", name);
+    let (image, env, container_data): (&str, Vec<String>, &str) = match backend {
+        EsBackend::OpenSearch => (
+            &images.opensearch,
+            vec![
+                "discovery.type=single-node".to_string(),
+                "DISABLE_SECURITY_PLUGIN=true".to_string(),
+                "DISABLE_INSTALL_DEMO_CONFIG=true".to_string(),
+            ],
+            "/usr/share/opensearch/data",
+        ),
+        _ => (
+            &images.elasticsearch,
+            vec![
+                "discovery.type=single-node".to_string(),
+                "xpack.security.enabled=false".to_string(),
+                "xpack.security.enrollment.enabled=false".to_string(),
+                "xpack.security.transport.ssl.enabled=false".to_string(),
+                "xpack.security.http.ssl.enabled=false".to_string(),
+            ],
+            "/usr/share/elasticsearch/data",
+        ),
+    };
+    set_str(&mut m, "image", image);
     set_str(&mut m, "network_mode", "host");
-    set_seq(
-        &mut m,
-        "environment",
-        &[
-            "discovery.type=single-node".to_string(),
-            "xpack.security.enabled=false".to_string(),
-            "xpack.security.enrollment.enabled=false".to_string(),
-            "xpack.security.transport.ssl.enabled=false".to_string(),
-            "xpack.security.http.ssl.enabled=false".to_string(),
-        ],
-    );
+    set_seq(&mut m, "environment", &env);
     // ulimits: { memlock: { soft: -1, hard: -1 } }
     let mut memlock = Mapping::new();
     memlock.insert(Value::from("soft"), Value::from(-1));
@@ -545,11 +567,7 @@ fn elasticsearch_service(images: &Images, data_dir: &str) -> Value {
     ulimits.insert(Value::from("memlock"), Value::Mapping(memlock));
     m.insert(Value::from("ulimits"), Value::Mapping(ulimits));
 
-    set_seq(
-        &mut m,
-        "volumes",
-        &[format!("{data_dir}:/usr/share/elasticsearch/data")],
-    );
+    set_seq(&mut m, "volumes", &[format!("{data_dir}:{container_data}")]);
     set_str(&mut m, "restart", "unless-stopped");
     Value::Mapping(m)
 }
@@ -591,17 +609,26 @@ pub fn parse_compose(
         let present = services.contains_key(Value::from(arkime_service_name(prefix, c)));
         set_component(components, c, present);
     }
-    answers.install_demo_es = services.contains_key(Value::from("elasticsearch"));
-    // Recover the ES data dir from its bind mount.
-    if let Some(es) = services
-        .get(Value::from("elasticsearch"))
-        .and_then(|v| v.as_mapping())
-    {
-        if let Some(host) = es
-            .get(Value::from("volumes"))
+    // Which single-node backend (if any) is present.
+    answers.es_backend = if services.contains_key(Value::from("opensearch")) {
+        EsBackend::OpenSearch
+    } else if services.contains_key(Value::from("elasticsearch")) {
+        EsBackend::Elasticsearch
+    } else {
+        EsBackend::None
+    };
+    // Recover the data dir from the backend's bind mount.
+    if let (Some(name), Some(data_path)) = (
+        answers.es_backend.service_name(),
+        answers.es_backend.data_path(),
+    ) {
+        if let Some(host) = services
+            .get(Value::from(name))
+            .and_then(|v| v.as_mapping())
+            .and_then(|es| es.get(Value::from("volumes")))
             .and_then(|v| v.as_sequence())
             .and_then(|s| s.iter().filter_map(|v| v.as_str()).next())
-            .and_then(|v| v.strip_suffix(":/usr/share/elasticsearch/data"))
+            .and_then(|v| v.strip_suffix(&format!(":{data_path}")))
         {
             answers.es_data_dir = host.to_string();
         }
@@ -809,7 +836,7 @@ mod tests {
             ..Default::default()
         };
         let a = Answers {
-            install_demo_es: true,
+            es_backend: EsBackend::Elasticsearch,
             es_data_dir: "/esdata".into(),
             ..answers()
         };
@@ -840,8 +867,42 @@ mod tests {
         let mut ans = Answers::default();
         let mut m = MountSelection::default();
         parse_compose(&out, DEFAULT_PREFIX, &mut c, &mut ans, &mut m);
-        assert!(ans.install_demo_es);
+        assert_eq!(ans.es_backend, EsBackend::Elasticsearch);
         assert_eq!(ans.es_data_dir, "/esdata");
+    }
+
+    #[test]
+    fn opensearch_backend_service_and_round_trip() {
+        let components = Components {
+            capture: true,
+            ..Default::default()
+        };
+        let a = Answers {
+            es_backend: EsBackend::OpenSearch,
+            es_data_dir: "/osdata".into(),
+            ..answers()
+        };
+        let out = render_compose(
+            "",
+            DEFAULT_PREFIX,
+            &components,
+            &a,
+            &MountSelection::default(),
+            &Images::default(),
+        );
+        assert!(out.contains("container_name: opensearch"));
+        assert!(out.contains("image: opensearchproject/opensearch:2"));
+        assert!(out.contains("DISABLE_SECURITY_PLUGIN=true"));
+        assert!(out.contains("/osdata:/usr/share/opensearch/data"));
+        assert!(out.contains("depends_on"));
+        assert!(!out.contains("elasticsearch")); // the ES variant isn't used
+
+        let mut c = Components::default();
+        let mut ans = Answers::default();
+        let mut m = MountSelection::default();
+        parse_compose(&out, DEFAULT_PREFIX, &mut c, &mut ans, &mut m);
+        assert_eq!(ans.es_backend, EsBackend::OpenSearch);
+        assert_eq!(ans.es_data_dir, "/osdata");
     }
 
     #[test]

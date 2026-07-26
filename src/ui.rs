@@ -276,17 +276,7 @@ fn mask(value: &str) -> String {
 }
 
 fn render_elasticsearch(app: &App, f: &mut Frame, area: Rect) {
-    let demo = if app.answers.install_demo_es {
-        "[x]"
-    } else {
-        "[ ]"
-    };
     let is_docker = app.deployment == Some(Deployment::Docker);
-    let toggle_label = if is_docker {
-        "run a single-node Elasticsearch we configure (space)"
-    } else {
-        "install a local demo Elasticsearch (space)"
-    };
     let mut lines = vec![
         Line::from("OpenSearch/Elasticsearch connection. Tab/↑↓ between fields."),
         Line::from(""),
@@ -302,20 +292,33 @@ fn render_elasticsearch(app: &App, f: &mut Frame, area: Rect) {
             app.es_focus == 2,
         ),
         {
+            // Backend choice: cycle none / opensearch / elasticsearch with space.
             let focused = app.es_focus == 3;
             let style = if focused {
                 Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
             };
-            Line::from(Span::styled(
-                format!("{}{demo} {toggle_label}", if focused { "▶ " } else { "  " }),
-                style,
-            ))
+            let verb = if is_docker { "run" } else { "install" };
+            let value = match app.answers.es_backend {
+                crate::domain::EsBackend::None => "none (use the URL above)".to_string(),
+                b => format!("{verb} single-node {}", b.short()),
+            };
+            Line::from(vec![
+                Span::styled(
+                    format!("{}    backend: ", if focused { "▶ " } else { "  " }),
+                    if focused {
+                        Style::default().fg(ACCENT)
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    },
+                ),
+                Span::styled(format!("{value}  (space cycles)"), style),
+            ])
         },
     ];
-    // Docker single-node ES: ask for the host data directory (a compose volume).
-    if is_docker && app.answers.install_demo_es {
+    // Docker single-node backend: ask for the host data directory (a volume).
+    if is_docker && app.answers.es_backend.is_some() {
         lines.push(field_line(
             "data dir",
             app.fields.es_data.value(),
@@ -594,31 +597,27 @@ fn render_review(app: &App, f: &mut Frame, area: Rect) {
     }
     if app.components.needs_elasticsearch() {
         let is_docker = app.deployment == Some(Deployment::Docker);
-        let single_node = app.answers.install_demo_es;
-        // With our single-node ES the containers use localhost.
-        let es_url = if is_docker && single_node {
+        let single_node = app.answers.es_backend.is_some();
+        // With a single-node backend the containers use localhost.
+        let es_url = if single_node {
             crate::domain::Answers::SINGLE_NODE_ES_URL
         } else {
             app.answers.elasticsearch_or_default()
         };
-        lines.push(kv("Elasticsearch", es_url));
+        lines.push(kv("Datastore URL", es_url));
         if app.answers.has_es_user() && !single_node {
             lines.push(kv("ES user", &app.answers.es_user));
         }
-        if is_docker {
-            lines.push(kv(
-                "Single-node ES",
-                if single_node {
-                    "yes (we configure it)"
-                } else {
-                    "no"
-                },
-            ));
+        lines.push(kv(
+            "Single-node",
             if single_node {
-                lines.push(kv("ES data dir", &app.answers.es_data_dir));
-            }
-        } else {
-            lines.push(kv("Demo ES", if single_node { "yes" } else { "no" }));
+                app.answers.es_backend.short()
+            } else {
+                "no (external)"
+            },
+        ));
+        if is_docker && single_node {
+            lines.push(kv("ES data dir", &app.answers.es_data_dir));
         }
     }
     if app.components.needs_s2s_password() {
@@ -782,7 +781,9 @@ fn render_footer(app: &App, f: &mut Frame, area: Rect) {
         WizardStep::DockerMounts => {
             "↑↓ row · type host path · space toggle · Enter next · Esc back"
         }
-        WizardStep::Elasticsearch => "Tab/↑↓ field · type · space (demo) · Enter next · Esc back",
+        WizardStep::Elasticsearch => {
+            "Tab/↑↓ field · type · space cycles backend · Enter next · Esc back"
+        }
         WizardStep::ViewerUploads => "space toggle · →/Enter next · ←/Esc back",
         WizardStep::GeoIp => "Tab/↑↓ field · type · space (download) · Enter next · Esc back",
         WizardStep::AdminSetup => "Tab/↑↓ row · space toggle · type · Enter next · Esc back",
