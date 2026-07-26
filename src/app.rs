@@ -214,16 +214,26 @@ impl App {
         self.deployment == Some(Deployment::Docker)
     }
 
-    /// The external WISE URL is only asked for when the wise.so plugin is
-    /// enabled but the wise component is NOT being deployed locally.
+    /// Ask for the external WISE URL when a WISE plugin is enabled (capture's
+    /// `wise.so` or viewer's `wise.js`) but the wise component isn't deployed
+    /// locally.
     fn wise_url_needed(&self) -> bool {
-        self.components.capture
-            && !self.components.wise
+        if self.components.wise {
+            return false;
+        }
+        let capture_wise = self.components.capture
             && self
                 .answers
                 .plugins
                 .split(';')
-                .any(|p| p.trim() == plugins::WISE_PLUGIN)
+                .any(|p| p.trim() == plugins::WISE_PLUGIN);
+        let viewer_wise = self.components.viewer
+            && self
+                .answers
+                .viewer_plugins
+                .split(';')
+                .any(|p| p.trim() == plugins::WISE_VIEWER_PLUGIN);
+        capture_wise || viewer_wise
     }
 
     /// Reset per-screen transient cursor state when a screen becomes active.
@@ -1407,6 +1417,10 @@ mod tests {
         // Plugins: leave none selected, proceed.
         press(&mut a, KeyCode::Enter);
         assert_eq!(a.answers.plugins, "");
+        // viewer wise.js is enabled, so we're asked for the WISE URL.
+        assert_eq!(a.step, WizardStep::WiseUrl);
+        press(&mut a, KeyCode::Enter);
+        assert_eq!(a.answers.wise_url, Answers::DEFAULT_WISE_URL);
         assert_eq!(a.step, WizardStep::GeoIp);
 
         // GeoIP default is yes; proceed to Review.
@@ -1571,6 +1585,24 @@ mod tests {
         // Default is prefilled; accept it.
         press(&mut a, KeyCode::Enter);
         assert_eq!(a.answers.wise_url, Answers::DEFAULT_WISE_URL);
+    }
+
+    #[test]
+    fn viewer_wise_js_asks_for_wise_url() {
+        let mut a = app();
+        a.deployment = Some(Deployment::Docker);
+        a.components = Components {
+            viewer: true,
+            ..Default::default()
+        };
+        a.step = WizardStep::ViewerPlugins;
+        a.on_enter_step();
+        // Check wise.js (index 0) and proceed.
+        a.cursor = 0;
+        press(&mut a, KeyCode::Char(' '));
+        press(&mut a, KeyCode::Enter);
+        assert_eq!(a.answers.viewer_plugins, "wise.js");
+        assert_eq!(a.step, WizardStep::WiseUrl);
     }
 
     #[test]

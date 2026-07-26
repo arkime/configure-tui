@@ -414,9 +414,9 @@ fn render_viewer_plugins(app: &App, f: &mut Frame, area: Rect) {
 
 fn render_wise_url(app: &App, f: &mut Frame, area: Rect) {
     let lines = vec![
-        Line::from("wise.so is enabled but the wise component isn't deployed here."),
+        Line::from("A WISE plugin is enabled but the wise service isn't deployed here."),
         Line::from(Span::styled(
-            "Enter the URL of the external WISE service capture should query.",
+            "Enter the URL of the external WISE service to query.",
             Style::default().fg(Color::DarkGray),
         )),
         Line::from(""),

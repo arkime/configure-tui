@@ -10,9 +10,12 @@ pub const WISE_PLUGIN: &str = "wise.so";
 /// in advanced mode.
 pub const KNOWN_PLUGINS: [&str; 4] = [WISE_PLUGIN, "ja4plus.amd64.so", "entropy.so", "suricata.so"];
 
+/// The wise viewer plugin — needs the WISE URL just like capture's `wise.so`.
+pub const WISE_VIEWER_PLUGIN: &str = "wise.js";
+
 /// Curated viewer plugins (the `viewerPlugins=` list). Anything else can be
 /// typed in advanced mode.
-pub const KNOWN_VIEWER_PLUGINS: [&str; 1] = ["wise.js"];
+pub const KNOWN_VIEWER_PLUGINS: [&str; 1] = [WISE_VIEWER_PLUGIN];
 
 /// Merge a `;`-separated plugin list with the wise requirement, de-duplicating
 /// while preserving order. `wise_required` forces `wise.so` to the front if
