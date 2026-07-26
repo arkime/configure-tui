@@ -76,17 +76,65 @@ pub fn system_actions(
         }
     }
 
-    // 5. Services.
+    // 5. Database init + admin user (before starting services).
+    let db = build.install_dir.join("db/db.pl");
+    let add_user = build.install_dir.join("bin/arkime_add_user.sh");
+    let es = answers.elasticsearch_or_default();
+    if answers.init_db {
+        // db.pl init prompts for the word INIT; feed it.
+        let cmd = format!("echo INIT | {} {} init", db.to_string_lossy(), es);
+        match ops.run("sh", &["-c", &cmd]) {
+            Ok(()) => log.push(LogLine::new(Level::Info, "Initialized the database".into())),
+            Err(e) => log.push(LogLine::new(Level::Warn, format!("db init: {e}"))),
+        }
+    }
+    if answers.create_admin && !answers.admin_user.is_empty() {
+        let r = ops.run(
+            &add_user.to_string_lossy(),
+            &[
+                &answers.admin_user,
+                &answers.admin_user,
+                &answers.admin_password,
+                "--admin",
+            ],
+        );
+        match r {
+            Ok(()) => log.push(LogLine::new(
+                Level::Info,
+                format!("Created admin user '{}'", answers.admin_user),
+            )),
+            Err(e) => log.push(LogLine::new(Level::Warn, format!("add user: {e}"))),
+        }
+    }
+
+    // 6. Services.
     for c in components.enabled() {
         enable_start_service(ops, platform, c, log);
     }
 
+    // Next steps for anything not done automatically.
+    log.push(LogLine::new(Level::Info, "Done. Next steps:".into()));
+    if !answers.init_db {
+        log.push(LogLine::new(
+            Level::Info,
+            format!(
+                "  Initialize the DB once:  {} {es} init",
+                db.to_string_lossy()
+            ),
+        ));
+    }
+    if !answers.create_admin {
+        log.push(LogLine::new(
+            Level::Info,
+            format!(
+                "  Add a user:  {} <user> <name> <pass> --admin",
+                add_user.to_string_lossy()
+            ),
+        ));
+    }
     log.push(LogLine::new(
         Level::Info,
-        format!(
-            "Done. Continue with the remaining steps in {}/README.txt",
-            build.install_dir.display()
-        ),
+        "  Then open the viewer (default http://<host>:8005).".into(),
     ));
 }
 

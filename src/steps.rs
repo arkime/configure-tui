@@ -35,6 +35,8 @@ pub enum WizardStep {
     WiseUrl,
     /// GeoIP download prompt (native + capture only).
     GeoIp,
+    /// Native: initialize DB / create admin user.
+    AdminSetup,
     /// Suggested host bind mounts (docker only).
     DockerMounts,
     /// Summary + confirm.
@@ -92,6 +94,10 @@ pub fn required_steps(
     // GeoIP is a native-only action, and only relevant when capturing.
     if deployment == Some(Deployment::Native) && components.capture {
         steps.push(WizardStep::GeoIp);
+    }
+    // Native DB init / admin user, once there's a viewer/capture cluster.
+    if deployment == Some(Deployment::Native) && (components.capture || components.viewer) {
+        steps.push(WizardStep::AdminSetup);
     }
     // Suggested bind mounts only apply to the docker deployment.
     if deployment == Some(Deployment::Docker) && components.any() {
@@ -181,6 +187,7 @@ mod tests {
                 WizardStep::ViewerPlugins,
                 WizardStep::Plugins,
                 WizardStep::GeoIp,
+                WizardStep::AdminSetup,
                 WizardStep::Review,
                 WizardStep::Progress,
                 WizardStep::Done,

@@ -73,6 +73,7 @@ fn step_title(step: WizardStep) -> &'static str {
         WizardStep::WiseUrl => "WISE URL",
         WizardStep::DockerMounts => "Docker mounts",
         WizardStep::GeoIp => "GeoIP",
+        WizardStep::AdminSetup => "Database & admin",
         WizardStep::Review => "Review",
         WizardStep::Progress => "Applying",
         WizardStep::Done => "Done",
@@ -97,6 +98,7 @@ fn render_body(app: &App, f: &mut Frame, area: Rect) {
         WizardStep::WiseUrl => render_wise_url(app, f, inner),
         WizardStep::DockerMounts => render_docker_mounts(app, f, inner),
         WizardStep::GeoIp => render_geoip(app, f, inner),
+        WizardStep::AdminSetup => render_admin_setup(app, f, inner),
         WizardStep::Review => render_review(app, f, inner),
         WizardStep::Progress => render_progress(app, f, inner),
         WizardStep::Done => {}
@@ -493,6 +495,46 @@ fn render_viewer_uploads(app: &App, f: &mut Frame, area: Rect) {
     f.render_widget(Paragraph::new(lines), area);
 }
 
+fn render_admin_setup(app: &App, f: &mut Frame, area: Rect) {
+    let toggle = |on: bool, label: &str, focused: bool| -> Line<'static> {
+        let mark = if on { "[x]" } else { "[ ]" };
+        let marker = if focused { "▶ " } else { "  " };
+        let style = if focused {
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        Line::from(Span::styled(format!("{marker}{mark} {label}"), style))
+    };
+    let mut lines = vec![
+        Line::from("Post-setup actions (Tab/↑↓ between rows, space toggles)."),
+        Line::from(""),
+        toggle(
+            app.answers.init_db,
+            "Initialize the database (db.pl init — ERASES an existing one!)",
+            app.admin_focus == 0,
+        ),
+        toggle(
+            app.answers.create_admin,
+            "Create an admin user",
+            app.admin_focus == 1,
+        ),
+    ];
+    if app.answers.create_admin {
+        lines.push(field_line(
+            "user",
+            app.fields.admin_user.value(),
+            app.admin_focus == 2,
+        ));
+        lines.push(field_line(
+            "password",
+            &mask(app.fields.admin_password.value()),
+            app.admin_focus == 3,
+        ));
+    }
+    f.render_widget(Paragraph::new(lines), area);
+}
+
 fn render_geoip(app: &App, f: &mut Frame, area: Rect) {
     let lines = vec![
         Line::from("GeoIP (space to toggle)."),
@@ -591,6 +633,16 @@ fn render_review(app: &App, f: &mut Frame, area: Rect) {
                 "no"
             },
         ));
+    }
+    if app.deployment == Some(Deployment::Native)
+        && (app.components.capture || app.components.viewer)
+    {
+        if app.answers.init_db {
+            lines.push(kv("Initialize DB", "yes (erases existing!)"));
+        }
+        if app.answers.create_admin {
+            lines.push(kv("Admin user", &app.answers.admin_user));
+        }
     }
     if app.deployment == Some(Deployment::Docker) {
         let mounts: Vec<String> = MountSelection::relevant_kinds(&app.components)
@@ -708,6 +760,7 @@ fn render_footer(app: &App, f: &mut Frame, area: Rect) {
         WizardStep::Elasticsearch => "Tab/↑↓ field · type · space (demo) · Enter next · Esc back",
         WizardStep::ViewerUploads => "space toggle · →/Enter next · ←/Esc back",
         WizardStep::GeoIp => "space toggle · →/Enter next · ←/Esc back",
+        WizardStep::AdminSetup => "Tab/↑↓ row · space toggle · type · Enter next · Esc back",
         WizardStep::Review => "→/Enter apply · ←/Esc back",
         WizardStep::Progress => {
             if app.applied {

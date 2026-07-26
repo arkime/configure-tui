@@ -24,6 +24,14 @@ pub struct Answers {
     pub download_geoip: bool,
     /// Whether the viewer should allow PCAP uploads (sets `uploadCommand`).
     pub enable_uploads: bool,
+    /// Native only: initialize the OpenSearch/ES database (db.pl init).
+    pub init_db: bool,
+    /// Native only: create an admin viewer user after setup.
+    pub create_admin: bool,
+    /// Admin user id/name (when `create_admin`).
+    pub admin_user: String,
+    /// Admin password (when `create_admin`).
+    pub admin_password: String,
     /// `;`-separated capture plugin list (already finalized, incl. wise.so when
     /// the wise component is enabled). Empty means none.
     pub plugins: String,
@@ -43,6 +51,9 @@ impl Answers {
 
     /// Default host data dir for the docker single-node Elasticsearch.
     pub const DEFAULT_ES_DATA_DIR: &'static str = "/arkime/esdata";
+
+    /// Default admin user id.
+    pub const DEFAULT_ADMIN_USER: &'static str = "admin";
 
     /// URL the arkime containers use to reach the single-node ES (host net,
     /// security disabled).

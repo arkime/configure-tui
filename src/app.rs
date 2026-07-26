@@ -36,6 +36,8 @@ pub struct Fields {
     pub es_data: Input,
     pub load_path: Input,
     pub prefix: Input,
+    pub admin_user: Input,
+    pub admin_password: Input,
 }
 
 /// The full-file editor overlay: one text buffer per document, Tab-cycled.
@@ -74,6 +76,8 @@ pub struct App {
     pub cursor: usize,
     /// Sub-field focus for the multi-field Elasticsearch screen (0..=3).
     pub es_focus: usize,
+    /// Sub-field focus for the AdminSetup screen (0..=3).
+    pub admin_focus: usize,
 
     /// Per-detected-interface checkbox state, parallel to `detected_interfaces`.
     pub interface_checked: Vec<bool>,
@@ -128,6 +132,7 @@ impl App {
         fields.es_url = Input::new(Answers::DEFAULT_ES_URL.to_string());
         fields.wise_url = Input::new(Answers::DEFAULT_WISE_URL.to_string());
         fields.es_data = Input::new(Answers::DEFAULT_ES_DATA_DIR.to_string());
+        fields.admin_user = Input::new(Answers::DEFAULT_ADMIN_USER.to_string());
 
         // Pre-check the first detected interface (common single-NIC case). With
         // nothing detected there is nothing to check, so start in advanced mode.
@@ -159,6 +164,7 @@ impl App {
             fields,
             cursor: 0,
             es_focus: 0,
+            admin_focus: 0,
             interface_checked,
             interface_advanced,
             plugin_checked: vec![false; plugins::KNOWN_PLUGINS.len()],
@@ -280,6 +286,7 @@ impl App {
                 }
             }
             WizardStep::ViewerPlugins => self.cursor = 0,
+            WizardStep::AdminSetup => self.admin_focus = 0,
             WizardStep::DockerMounts => self.cursor = 0,
             _ => {}
         }
@@ -366,6 +373,7 @@ impl App {
             WizardStep::WiseUrl => self.key_wise_url(key),
             WizardStep::DockerMounts => self.key_docker_mounts(key),
             WizardStep::GeoIp => self.key_geoip(key),
+            WizardStep::AdminSetup => self.key_admin_setup(key),
             WizardStep::Review => self.key_review(key),
             WizardStep::Progress => self.key_progress(key),
             WizardStep::Done => self.should_quit = true,
@@ -379,6 +387,7 @@ impl App {
             | WizardStep::Elasticsearch
             | WizardStep::S2sPassword
             | WizardStep::WiseUrl
+            | WizardStep::AdminSetup
             | WizardStep::DockerMounts => true,
             WizardStep::Interfaces => self.interface_advanced,
             WizardStep::Plugins => self.plugin_advanced,
@@ -832,6 +841,37 @@ impl App {
         }
     }
 
+    /// AdminSetup form: 0 init-db toggle, 1 create-admin toggle, 2 user, 3 pass.
+    fn key_admin_setup(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Up => self.admin_focus = self.admin_focus.saturating_sub(1),
+            KeyCode::Down | KeyCode::Tab => self.admin_focus = (self.admin_focus + 1).min(3),
+            KeyCode::Char(' ') if self.admin_focus == 0 => {
+                self.answers.init_db = !self.answers.init_db;
+            }
+            KeyCode::Char(' ') if self.admin_focus == 1 => {
+                self.answers.create_admin = !self.answers.create_admin;
+            }
+            KeyCode::Enter => {
+                self.commit_admin_setup();
+                self.advance();
+            }
+            _ if self.admin_focus >= 2 => {
+                if self.admin_focus == 2 {
+                    self.fields.admin_user.handle_event(&Event::Key(key));
+                } else {
+                    self.fields.admin_password.handle_event(&Event::Key(key));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn commit_admin_setup(&mut self) {
+        self.answers.admin_user = self.fields.admin_user.value().trim().to_string();
+        self.answers.admin_password = self.fields.admin_password.value().to_string();
+    }
+
     fn key_review(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Enter => {
@@ -1053,6 +1093,10 @@ impl App {
         self.fields.s2s = Input::new(self.answers.s2s_password.clone());
         self.fields.plugins = Input::new(self.answers.plugins.clone());
         self.fields.viewer_plugins = Input::new(self.answers.viewer_plugins.clone());
+        if !self.answers.admin_user.is_empty() {
+            self.fields.admin_user = Input::new(self.answers.admin_user.clone());
+        }
+        self.fields.admin_password = Input::new(self.answers.admin_password.clone());
         if !self.answers.es_data_dir.is_empty() {
             self.fields.es_data = Input::new(self.answers.es_data_dir.clone());
         }
@@ -1155,6 +1199,7 @@ impl App {
             WizardStep::WiseUrl => {
                 self.answers.wise_url = self.fields.wise_url.value().trim().to_string();
             }
+            WizardStep::AdminSetup => self.commit_admin_setup(),
             _ => {}
         }
     }
@@ -1291,14 +1336,17 @@ impl App {
 
         match self.deployment {
             Some(Deployment::Docker) => {
-                log.push(LogLine::new(
-                    crate::log::Level::Info,
-                    "Files written. Nothing is running yet — start Arkime with:".into(),
-                ));
-                log.push(LogLine::new(
-                    crate::log::Level::Info,
-                    format!("    cd {} && docker compose up -d", self.out_dir.display()),
-                ));
+                let dir = self.out_dir.display();
+                let cap = format!("arkime-{}", Component::Capture.label());
+                for line in [
+                    "Files written. Nothing is running yet — next steps:".to_string(),
+                    format!("  Start:  cd {dir} && docker compose up -d"),
+                    // The arkime container image (docker.sh) can init the DB; run it once.
+                    format!("  Init DB once:  docker compose run --rm {cap} /opt/arkime/db/db.pl $ARKIME__elasticsearch init"),
+                    format!("  Add a user:  docker compose exec {cap} /opt/arkime/bin/arkime_add_user.sh <user> <name> <pass> --admin"),
+                ] {
+                    log.push(LogLine::new(crate::log::Level::Info, line));
+                }
             }
             _ => {
                 native::system_actions(
@@ -1423,7 +1471,11 @@ mod tests {
         assert_eq!(a.answers.wise_url, Answers::DEFAULT_WISE_URL);
         assert_eq!(a.step, WizardStep::GeoIp);
 
-        // GeoIP default is yes; proceed to Review.
+        // GeoIP default is yes; proceed.
+        press(&mut a, KeyCode::Enter);
+        assert_eq!(a.step, WizardStep::AdminSetup);
+
+        // Admin/DB: leave both off, proceed to Review.
         press(&mut a, KeyCode::Enter);
         assert_eq!(a.step, WizardStep::Review);
     }
