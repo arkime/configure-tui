@@ -1,7 +1,14 @@
-# arkime-setup
+# Configure-tui
 
 A terminal UI that configures an [Arkime](https://arkime.com) installation,
-replacing the old bash `Configure` script. It supports **native** deployments
+replacing the old bash `Configure` script. The shipped binary is `Configure-tui`
+(it lives next to `Configure` in `/opt/arkime/bin`).
+
+Run it without installing anything via Docker to generate compose files:
+
+```sh
+docker run --rm -it -v "$PWD:/work" ghcr.io/arkime/configure-tui
+``` It supports **native** deployments
 (writes `config.ini` etc., manages systemd/rc.d services) and **Docker**
 deployments (generates `docker-compose.yml` + `ARKIME__*` env, writes no
 `.ini`), and lets you toggle any combination of components
@@ -98,34 +105,38 @@ Runtime overrides:
 Compile-time defaults can be baked via the `BUILD_ARKIME_INSTALL_DIR` /
 `BUILD_ARKIME_NAME` env vars at build time (see `src/domain/build_config.rs`).
 
-## Static / cross builds
+## Builds & releases
 
-Fully static musl binaries, built with [`cross`](https://github.com/cross-rs/cross):
+Fully static musl binaries on Linux (`+crt-static`), a native binary on macOS:
 
 ```sh
-cross build --release --target x86_64-unknown-linux-musl
-cross build --release --target aarch64-unknown-linux-musl
-file target/x86_64-unknown-linux-musl/release/arkime-setup   # "statically linked"
+cargo build --release --target x86_64-unknown-linux-musl
+file target/x86_64-unknown-linux-musl/release/Configure-tui   # "statically linked"
 ```
 
-CI (`.github/workflows/release.yml`) builds both arches on tag push and attaches
-`arkime-setup-<arch>` + `.sha256` to the GitHub release.
+On a `v*` tag, `.github/workflows/release.yml` builds on native runners
+— **linux-amd64** (`ubuntu-24.04`), **linux-arm64** (`ubuntu-24.04-arm`), and
+**macos-arm64** (`macos-14`) — and attaches `Configure-tui-<name>` + `.sha256`
+to the GitHub release (version comes from the tag). It also builds and pushes
+multi-arch container images to `ghcr.io/arkime/configure-tui`. All actions are
+pinned by commit SHA.
 
 ## Packaging integration (Arkime rpm/deb)
 
-The Arkime build downloads the correct-arch `arkime-setup-<arch>` (pinned by tag
+The Arkime build downloads the correct-arch `Configure-tui-<name>` (pinned by tag
 + checksum), drops it into `bin/`, and `make install` copies it to
-`/opt/arkime/bin/`. It replaces the old `bin/Configure`; install it under that
-name for a drop-in swap. The `.ini.sample` files are read from
-`/opt/arkime/etc` at runtime (the binary also embeds fallback copies under
-`templates/`).
+`/opt/arkime/bin/Configure-tui`, next to the existing `Configure`. The
+`.ini.sample` files are read from `/opt/arkime/etc` at runtime (the binary also
+embeds fallback copies under `templates/`).
 
 ## Layout
 
 - `src/domain/` — deployment, components, platform, answers, build config
 - `src/steps.rs` — wizard state machine (`required_steps`/`next`/`prev`)
 - `src/config/` — native `.ini` templating (`substitute`, `templates`)
-- `src/actions/` — `native` (systemd/rc.d, dirs, limits.d, demo-ES, GeoIP),
-  `docker` (compose + env), `system` (the `SystemOps` side-effect boundary)
+- `src/docset.rs` — in-memory documents + round-trip parse/merge for ini, env,
+  and compose (opensearch/elasticsearch backends, prefixes, GeoIP.conf)
+- `src/actions/` — `native` (systemd/rc.d, dirs, limits.d, backend install,
+  GeoIP, DB init/user), `system` (the `SystemOps` side-effect boundary)
 - `src/app.rs`, `src/ui.rs` — Elm-style model/update + rendering
 - `templates/` — fallback `.ini.sample` copies (kept in sync with Arkime's)

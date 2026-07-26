@@ -6,7 +6,7 @@ description = "Interactive TUI to configure an Arkime installation (native or do
 license = "Apache-2.0"
 
 # The shipped binary is `Configure-tui` — it sits alongside the existing
-# `Configure` in /opt/arkime/bin. The crate/repo stays `setup-tui`.
+# `Configure` in /opt/arkime/bin. Repo: arkime/configure-tui.
 [[bin]]
 name = "Configure-tui"
 path = "src/main.rs"

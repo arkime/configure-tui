@@ -14,6 +14,7 @@ COPY . .
 RUN cargo build --release --locked
 
 FROM alpine:3.20
+LABEL org.opencontainers.image.source="https://github.com/arkime/configure-tui"
 LABEL org.opencontainers.image.description="Interactive TUI to generate Arkime docker-compose / config files"
 COPY --from=build /src/target/release/Configure-tui /usr/local/bin/Configure-tui
 WORKDIR /work
