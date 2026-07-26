@@ -511,7 +511,7 @@ fn render_admin_setup(app: &App, f: &mut Frame, area: Rect) {
         Line::from(""),
         toggle(
             app.answers.init_db,
-            "Initialize the database (db.pl init — ERASES an existing one!)",
+            "Initialize the database (db.pl init --ifneeded)",
             app.admin_focus == 0,
         ),
         toggle(
@@ -663,7 +663,7 @@ fn render_review(app: &App, f: &mut Frame, area: Rect) {
         && (app.components.capture || app.components.viewer)
     {
         if app.answers.init_db {
-            lines.push(kv("Initialize DB", "yes (erases existing!)"));
+            lines.push(kv("Initialize DB", "yes (init --ifneeded)"));
         }
         if app.answers.create_admin {
             lines.push(kv("Admin user", &app.answers.admin_user));

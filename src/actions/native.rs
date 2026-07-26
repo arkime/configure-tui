@@ -81,8 +81,9 @@ pub fn system_actions(
     let add_user = build.install_dir.join("bin/arkime_add_user.sh");
     let es = answers.elasticsearch_or_default();
     if answers.init_db {
-        // `initnoprompt` skips the confirmation prompt.
-        match ops.run(&db.to_string_lossy(), &[es, "initnoprompt"]) {
+        // `init --ifneeded`: inits a fresh cluster with no prompt, no-ops if
+        // already current (only prompts if a different version is present).
+        match ops.run(&db.to_string_lossy(), &[es, "init", "--ifneeded"]) {
             Ok(()) => log.push(LogLine::new(Level::Info, "Initialized the database".into())),
             Err(e) => log.push(LogLine::new(Level::Warn, format!("db init: {e}"))),
         }
@@ -117,7 +118,7 @@ pub fn system_actions(
         log.push(LogLine::new(
             Level::Info,
             format!(
-                "  Initialize the DB once:  {} {es} initnoprompt",
+                "  Initialize the DB once:  {} {es} init --ifneeded",
                 db.to_string_lossy()
             ),
         ));

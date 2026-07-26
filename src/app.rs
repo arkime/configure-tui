@@ -1412,13 +1412,27 @@ impl App {
         match self.deployment {
             Some(Deployment::Docker) => {
                 let dir = self.out_dir.display();
-                let cap = format!("arkime-{}", Component::Capture.label());
+                // Any arkime service works; prefer capture, then whatever's enabled.
+                let svc = if self.components.capture {
+                    format!("{}{}", self.service_prefix, Component::Capture.label())
+                } else {
+                    self.components
+                        .enabled()
+                        .next()
+                        .map(|c| format!("{}{}", self.service_prefix, c.label()))
+                        .unwrap_or_else(|| format!("{}capture", self.service_prefix))
+                };
+                let es = if self.answers.install_demo_es {
+                    Answers::SINGLE_NODE_ES_URL.to_string()
+                } else {
+                    self.answers.elasticsearch_or_default().to_string()
+                };
                 for line in [
                     "Files written. Nothing is running yet — next steps:".to_string(),
                     format!("  Start:  cd {dir} && docker compose up -d"),
-                    // The arkime container image (docker.sh) can init the DB; run it once.
-                    format!("  Init DB once:  docker compose run --rm {cap} /opt/arkime/db/db.pl $ARKIME__elasticsearch initnoprompt"),
-                    format!("  Add a user:  docker compose exec {cap} /opt/arkime/bin/arkime_add_user.sh <user> <name> <pass> --admin"),
+                    // db.sh does the DB init; --ifneeded is safe to re-run.
+                    format!("  Init DB once:  docker compose run --rm {svc} ./docker.sh capture --db '{es} init --ifneeded'"),
+                    format!("  Add a user:  docker compose exec {svc} /opt/arkime/bin/arkime_add_user.sh <user> <name> <pass> --admin"),
                 ] {
                     log.push(LogLine::new(crate::log::Level::Info, line));
                 }
