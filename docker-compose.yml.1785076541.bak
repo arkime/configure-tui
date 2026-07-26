@@ -53,7 +53,7 @@ services:
     ports:
     - '8008:8008'
     depends_on:
-    - opensearch
+    - elasticsearch
   arkime-cont3xt:
     image: arkime/arkime:latest
     command: cont3xt
@@ -65,7 +65,7 @@ services:
     ports:
     - '3218:3218'
     depends_on:
-    - opensearch
+    - elasticsearch
   elasticsearch:
     container_name: elasticsearch
     image: elasticsearch:8.19.19
@@ -82,36 +82,4 @@ services:
         hard: -1
     volumes:
     - /arkime/esdata:/usr/share/elasticsearch/data
-    restart: unless-stopped
-  arkime-capture:
-    image: arkime/arkime:latest
-    command: capture
-    env_file:
-    - arkime.env
-    restart: unless-stopped
-    volumes:
-    - /arkime/etc:/opt/arkime/etc
-    - /arkime/raw:/opt/arkime/raw
-    - /arkime/maxmind:/var/lib/GeoIP
-    - './GeoIP.conf:/etc/GeoIP.conf'
-    depends_on:
-    - opensearch
-    network_mode: host
-    cap_add:
-    - NET_ADMIN
-    - NET_RAW
-  opensearch:
-    container_name: opensearch
-    image: opensearchproject/opensearch:2
-    network_mode: host
-    environment:
-    - discovery.type=single-node
-    - DISABLE_SECURITY_PLUGIN=true
-    - DISABLE_INSTALL_DEMO_CONFIG=true
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-    volumes:
-    - /arkime/esdata:/usr/share/opensearch/data
     restart: unless-stopped

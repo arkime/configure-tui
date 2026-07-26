@@ -188,7 +188,7 @@ fn report_service(log: &mut Vec<LogLine>, svc: &str, r: anyhow::Result<()>) {
 /// 7.10.2 package (no security); OpenSearch uses a 2.x bundle with the security
 /// plugin disabled and single-node discovery appended to its config.
 const ES_VERSION: &str = "7.10.2";
-const OPENSEARCH_VERSION: &str = "2.19.1";
+const OPENSEARCH_VERSION: &str = "3.7.0";
 
 fn install_backend(backend: EsBackend, ops: &dyn SystemOps, log: &mut Vec<LogLine>) {
     let is_rpm =

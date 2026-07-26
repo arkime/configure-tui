@@ -28,7 +28,7 @@ impl Default for Images {
     fn default() -> Self {
         Images {
             arkime: "arkime/arkime:latest".into(),
-            opensearch: "opensearchproject/opensearch:2".into(),
+            opensearch: "opensearchproject/opensearch:3.7.0".into(),
             elasticsearch: "elasticsearch:8.19.19".into(),
         }
     }
@@ -891,7 +891,7 @@ mod tests {
             &Images::default(),
         );
         assert!(out.contains("container_name: opensearch"));
-        assert!(out.contains("image: opensearchproject/opensearch:2"));
+        assert!(out.contains("image: opensearchproject/opensearch:3.7.0"));
         assert!(out.contains("DISABLE_SECURITY_PLUGIN=true"));
         assert!(out.contains("/osdata:/usr/share/opensearch/data"));
         assert!(out.contains("depends_on"));
