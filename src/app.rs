@@ -1430,8 +1430,8 @@ impl App {
                 for line in [
                     "Files written. Nothing is running yet — next steps:".to_string(),
                     format!("  Start:  cd {dir} && docker compose up -d"),
-                    // db.sh does the DB init; --ifneeded is safe to re-run.
-                    format!("  Init DB once:  docker compose run --rm {svc} ./docker.sh capture --db '{es} init --ifneeded'"),
+                    // docker.sh --db runs db.pl; init-or-upgrade, safe to re-run.
+                    format!("  Init/upgrade DB:  docker compose run --rm {svc} ./docker.sh capture --db '{es} initorupgradenoprompt --ifneeded'"),
                     format!("  Add a user:  docker compose exec {svc} /opt/arkime/bin/arkime_add_user.sh <user> <name> <pass> --admin"),
                 ] {
                     log.push(LogLine::new(crate::log::Level::Info, line));
