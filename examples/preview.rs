@@ -133,6 +133,21 @@ fn main() {
     app.step = WizardStep::DockerMounts;
     println!("=== Docker mounts screen ===\n{}", render(&app));
 
+    // GeoIP form (MaxMind creds).
+    app.deployment = Some(Deployment::Native);
+    app.fields.maxmind_account = tui_input::Input::new("123456".into());
+    app.fields.maxmind_key = tui_input::Input::new("aBcDeF_key".into());
+    app.geoip_focus = 1;
+    app.step = WizardStep::GeoIp;
+    println!("=== GeoIP screen ===\n{}", render(&app));
+
+    // Admin/DB screen.
+    app.answers.create_admin = true;
+    app.admin_focus = 1;
+    app.step = WizardStep::AdminSetup;
+    println!("=== Database & admin screen ===\n{}", render(&app));
+    app.deployment = Some(Deployment::Docker);
+
     // Editor overlay (file tabs; Tab cycles).
     app.components = Components {
         capture: true,

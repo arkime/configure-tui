@@ -536,15 +536,42 @@ fn render_admin_setup(app: &App, f: &mut Frame, area: Rect) {
 }
 
 fn render_geoip(app: &App, f: &mut Frame, area: Rect) {
-    let lines = vec![
-        Line::from("GeoIP (space to toggle)."),
-        Line::from(""),
-        checkbox_line("Download GeoIP files", app.answers.download_geoip),
+    let mut lines = vec![
+        Line::from("GeoIP — MaxMind account + license (blank to skip GeoIP.conf)."),
         Line::from(Span::styled(
-            "Needs a MaxMind account — https://arkime.com/faq#maxmind",
+            "Free account: https://arkime.com/faq#maxmind",
             Style::default().fg(Color::DarkGray),
         )),
+        Line::from(""),
+        field_line(
+            "account ID",
+            app.fields.maxmind_account.value(),
+            app.geoip_focus == 0,
+        ),
+        field_line(
+            "license key",
+            app.fields.maxmind_key.value(),
+            app.geoip_focus == 1,
+        ),
     ];
+    // Native runs the download now; docker's container does it on start.
+    if app.deployment == Some(Deployment::Native) {
+        let checked = if app.answers.download_geoip {
+            "[x]"
+        } else {
+            "[ ]"
+        };
+        let marker = if app.geoip_focus == 2 { "▶ " } else { "  " };
+        let style = if app.geoip_focus == 2 {
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(Span::styled(
+            format!("{marker}{checked} Download GeoIP files now (space)"),
+            style,
+        )));
+    }
     f.render_widget(Paragraph::new(lines), area);
 }
 
@@ -624,15 +651,13 @@ fn render_review(app: &App, f: &mut Frame, area: Rect) {
             lines.push(kv("WISE URL", &app.answers.wise_url));
         }
     }
-    if app.deployment == Some(Deployment::Native) && app.components.capture {
-        lines.push(kv(
-            "GeoIP",
-            if app.answers.download_geoip {
-                "yes"
-            } else {
-                "no"
-            },
-        ));
+    if app.components.capture || app.components.viewer {
+        let geo = if !app.answers.maxmind_account.is_empty() {
+            "GeoIP.conf (MaxMind creds set)"
+        } else {
+            "skipped"
+        };
+        lines.push(kv("GeoIP", geo));
     }
     if app.deployment == Some(Deployment::Native)
         && (app.components.capture || app.components.viewer)
@@ -759,7 +784,7 @@ fn render_footer(app: &App, f: &mut Frame, area: Rect) {
         }
         WizardStep::Elasticsearch => "Tab/↑↓ field · type · space (demo) · Enter next · Esc back",
         WizardStep::ViewerUploads => "space toggle · →/Enter next · ←/Esc back",
-        WizardStep::GeoIp => "space toggle · →/Enter next · ←/Esc back",
+        WizardStep::GeoIp => "Tab/↑↓ field · type · space (download) · Enter next · Esc back",
         WizardStep::AdminSetup => "Tab/↑↓ row · space toggle · type · Enter next · Esc back",
         WizardStep::Review => "→/Enter apply · ←/Esc back",
         WizardStep::Progress => {

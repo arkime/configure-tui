@@ -31,9 +31,12 @@ dependencies, so it can be produced once and pulled into the rpm/deb packages.
    auto-enables `wise.so` when the wise component is on), **Viewer plugins**
    (viewer only; checkbox list incl. `wise.js`), **WISE URL** (only when
    `wise.so` is enabled without deploying the wise component — points capture at
-   an external WISE), **GeoIP** (native + capture), **Docker mounts** (docker
-   only; suggested host bind mounts, toggleable).
-5. **Review** → **Apply** → live progress log.
+   an external WISE), **GeoIP** (MaxMind account + license → writes `GeoIP.conf`;
+   native also runs the download), **Database & admin** (native only; optionally
+   `db.pl init` and create an admin user), **Docker mounts** (docker only;
+   suggested host bind mounts, toggleable).
+5. **Review** → **Apply** → live progress log with next-steps for anything left
+   to do by hand.
 
 Navigation: **Enter** / **→** advance, **Esc** / **←** go back (or quit on the
 first screen). On typing screens `←/→` move the field cursor instead, so use

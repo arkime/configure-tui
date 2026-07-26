@@ -22,6 +22,10 @@ pub struct Answers {
     pub es_data_dir: String,
     /// Whether to download GeoIP files (native mode only).
     pub download_geoip: bool,
+    /// MaxMind account ID (for generating GeoIP.conf). Empty = skip.
+    pub maxmind_account: String,
+    /// MaxMind license key (for generating GeoIP.conf).
+    pub maxmind_key: String,
     /// Whether the viewer should allow PCAP uploads (sets `uploadCommand`).
     pub enable_uploads: bool,
     /// Native only: initialize the OpenSearch/ES database (db.pl init).

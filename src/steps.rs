@@ -91,8 +91,8 @@ pub fn required_steps(
     if wise_url_needed {
         steps.push(WizardStep::WiseUrl);
     }
-    // GeoIP is a native-only action, and only relevant when capturing.
-    if deployment == Some(Deployment::Native) && components.capture {
+    // GeoIP (MaxMind creds -> GeoIP.conf; native also runs the download).
+    if components.capture || components.viewer {
         steps.push(WizardStep::GeoIp);
     }
     // Native DB init / admin user, once there's a viewer/capture cluster.
@@ -209,9 +209,9 @@ mod tests {
     }
 
     #[test]
-    fn docker_skips_geoip() {
+    fn docker_has_geoip_and_mounts() {
         let steps = required_steps(Some(Deployment::Docker), false, false, &caps(), false);
-        assert!(!steps.contains(&WizardStep::GeoIp));
+        assert!(steps.contains(&WizardStep::GeoIp)); // MaxMind creds -> GeoIP.conf
         assert!(steps.contains(&WizardStep::Interfaces));
         assert!(steps.contains(&WizardStep::DockerMounts));
         assert!(steps.contains(&WizardStep::Plugins));

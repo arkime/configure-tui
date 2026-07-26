@@ -38,6 +38,8 @@ pub struct Fields {
     pub prefix: Input,
     pub admin_user: Input,
     pub admin_password: Input,
+    pub maxmind_account: Input,
+    pub maxmind_key: Input,
 }
 
 /// The full-file editor overlay: one text buffer per document, Tab-cycled.
@@ -78,6 +80,8 @@ pub struct App {
     pub es_focus: usize,
     /// Sub-field focus for the AdminSetup screen (0..=3).
     pub admin_focus: usize,
+    /// Sub-field focus for the GeoIP screen (0..=2).
+    pub geoip_focus: usize,
 
     /// Per-detected-interface checkbox state, parallel to `detected_interfaces`.
     pub interface_checked: Vec<bool>,
@@ -165,6 +169,7 @@ impl App {
             cursor: 0,
             es_focus: 0,
             admin_focus: 0,
+            geoip_focus: 0,
             interface_checked,
             interface_advanced,
             plugin_checked: vec![false; plugins::KNOWN_PLUGINS.len()],
@@ -286,6 +291,7 @@ impl App {
                 }
             }
             WizardStep::ViewerPlugins => self.cursor = 0,
+            WizardStep::GeoIp => self.geoip_focus = 0,
             WizardStep::AdminSetup => self.admin_focus = 0,
             WizardStep::DockerMounts => self.cursor = 0,
             _ => {}
@@ -388,6 +394,7 @@ impl App {
             | WizardStep::S2sPassword
             | WizardStep::WiseUrl
             | WizardStep::AdminSetup
+            | WizardStep::GeoIp
             | WizardStep::DockerMounts => true,
             WizardStep::Interfaces => self.interface_advanced,
             WizardStep::Plugins => self.plugin_advanced,
@@ -825,12 +832,37 @@ impl App {
         }
     }
 
+    /// GeoIP form: 0 account, 1 license key, 2 download-now toggle (native only).
     fn key_geoip(&mut self, key: KeyEvent) {
+        let max = if self.deployment == Some(Deployment::Native) {
+            2
+        } else {
+            1
+        };
         match key.code {
-            KeyCode::Char(' ') => self.answers.download_geoip = !self.answers.download_geoip,
-            KeyCode::Enter => self.advance(),
+            KeyCode::Up => self.geoip_focus = self.geoip_focus.saturating_sub(1),
+            KeyCode::Down | KeyCode::Tab => self.geoip_focus = (self.geoip_focus + 1).min(max),
+            KeyCode::Char(' ') if self.geoip_focus == 2 => {
+                self.answers.download_geoip = !self.answers.download_geoip;
+            }
+            KeyCode::Enter => {
+                self.commit_geoip();
+                self.advance();
+            }
+            _ if self.geoip_focus < 2 => {
+                if self.geoip_focus == 0 {
+                    self.fields.maxmind_account.handle_event(&Event::Key(key));
+                } else {
+                    self.fields.maxmind_key.handle_event(&Event::Key(key));
+                }
+            }
             _ => {}
         }
+    }
+
+    fn commit_geoip(&mut self) {
+        self.answers.maxmind_account = self.fields.maxmind_account.value().trim().to_string();
+        self.answers.maxmind_key = self.fields.maxmind_key.value().trim().to_string();
     }
 
     fn key_viewer_uploads(&mut self, key: KeyEvent) {
@@ -1037,6 +1069,16 @@ impl App {
                     original: env_text.clone(),
                     text: env_text,
                 });
+                // Sibling GeoIP.conf, if present -> prefill MaxMind creds.
+                if let Ok(g) = std::fs::read_to_string(self.out_dir.join("GeoIP.conf")) {
+                    let (acc, key) = docset::parse_geoip_conf(&g);
+                    if let Some(a) = acc {
+                        self.answers.maxmind_account = a;
+                    }
+                    if let Some(k) = key {
+                        self.answers.maxmind_key = k;
+                    }
+                }
             }
             _ => {
                 // Native: treat the path as the etc dir (or a file's dir).
@@ -1097,6 +1139,12 @@ impl App {
             self.fields.admin_user = Input::new(self.answers.admin_user.clone());
         }
         self.fields.admin_password = Input::new(self.answers.admin_password.clone());
+        if !self.answers.maxmind_account.is_empty() {
+            self.fields.maxmind_account = Input::new(self.answers.maxmind_account.clone());
+        }
+        if !self.answers.maxmind_key.is_empty() {
+            self.fields.maxmind_key = Input::new(self.answers.maxmind_key.clone());
+        }
         if !self.answers.es_data_dir.is_empty() {
             self.fields.es_data = Input::new(self.answers.es_data_dir.clone());
         }
@@ -1200,6 +1248,7 @@ impl App {
                 self.answers.wise_url = self.fields.wise_url.value().trim().to_string();
             }
             WizardStep::AdminSetup => self.commit_admin_setup(),
+            WizardStep::GeoIp => self.commit_geoip(),
             _ => {}
         }
     }
@@ -1330,6 +1379,32 @@ impl App {
                 Err(e) => log.push(LogLine::new(
                     crate::log::Level::Error,
                     format!("writing {}: {e}", d.path.display()),
+                )),
+            }
+        }
+
+        // GeoIP.conf when MaxMind credentials were provided.
+        if !self.answers.maxmind_account.is_empty() && !self.answers.maxmind_key.is_empty() {
+            let content =
+                docset::geoip_conf(&self.answers.maxmind_account, &self.answers.maxmind_key);
+            let path = match self.deployment {
+                Some(Deployment::Docker) => self.out_dir.join("GeoIP.conf"),
+                _ => PathBuf::from("/etc/GeoIP.conf"),
+            };
+            if let Ok(Some(bak)) = ops.backup(&path) {
+                log.push(LogLine::new(
+                    crate::log::Level::Info,
+                    format!("Backed up to {}", bak.display()),
+                ));
+            }
+            match ops.write_file(&path, &content, 0o644) {
+                Ok(()) => log.push(LogLine::new(
+                    crate::log::Level::Info,
+                    format!("Wrote {}", path.display()),
+                )),
+                Err(e) => log.push(LogLine::new(
+                    crate::log::Level::Error,
+                    format!("GeoIP.conf: {e}"),
                 )),
             }
         }

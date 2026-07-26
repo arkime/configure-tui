@@ -75,6 +75,29 @@ pub struct Document {
 
 const ENV_FILE: &str = "arkime.env";
 
+/// The MaxMind editions Arkime uses.
+const GEOIP_EDITIONS: &str = "GeoLite2-ASN GeoLite2-City GeoLite2-Country";
+
+/// Render a `GeoIP.conf` for `geoipupdate` from the MaxMind account + license.
+pub fn geoip_conf(account: &str, key: &str) -> String {
+    format!("AccountID {account}\nLicenseKey {key}\nEditionIDs {GEOIP_EDITIONS}\n")
+}
+
+/// Read the account id + license key back out of a `GeoIP.conf`.
+pub fn parse_geoip_conf(text: &str) -> (Option<String>, Option<String>) {
+    let mut account = None;
+    let mut key = None;
+    for line in text.lines() {
+        let l = line.trim();
+        if let Some(v) = l.strip_prefix("AccountID ") {
+            account = Some(v.trim().to_string());
+        } else if let Some(v) = l.strip_prefix("LicenseKey ") {
+            key = Some(v.trim().to_string());
+        }
+    }
+    (account, key)
+}
+
 // ---------------------------------------------------------------------------
 // INI
 // ---------------------------------------------------------------------------
@@ -702,6 +725,17 @@ mod tests {
         let mut from_env = Answers::default();
         parse_env(&env, &mut from_env);
         assert_eq!(from_env.viewer_plugins, "wise.js");
+    }
+
+    #[test]
+    fn geoip_conf_round_trips() {
+        let c = geoip_conf("12345", "abcDEF");
+        assert!(c.contains("AccountID 12345"));
+        assert!(c.contains("LicenseKey abcDEF"));
+        assert!(c.contains("EditionIDs GeoLite2"));
+        let (a, k) = parse_geoip_conf(&c);
+        assert_eq!(a, Some("12345".to_string()));
+        assert_eq!(k, Some("abcDEF".to_string()));
     }
 
     #[test]
