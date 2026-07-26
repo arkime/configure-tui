@@ -1417,7 +1417,7 @@ impl App {
                     "Files written. Nothing is running yet — next steps:".to_string(),
                     format!("  Start:  cd {dir} && docker compose up -d"),
                     // The arkime container image (docker.sh) can init the DB; run it once.
-                    format!("  Init DB once:  docker compose run --rm {cap} /opt/arkime/db/db.pl $ARKIME__elasticsearch init"),
+                    format!("  Init DB once:  docker compose run --rm {cap} /opt/arkime/db/db.pl $ARKIME__elasticsearch initnoprompt"),
                     format!("  Add a user:  docker compose exec {cap} /opt/arkime/bin/arkime_add_user.sh <user> <name> <pass> --admin"),
                 ] {
                     log.push(LogLine::new(crate::log::Level::Info, line));

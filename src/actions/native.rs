@@ -81,9 +81,8 @@ pub fn system_actions(
     let add_user = build.install_dir.join("bin/arkime_add_user.sh");
     let es = answers.elasticsearch_or_default();
     if answers.init_db {
-        // db.pl init prompts for the word INIT; feed it.
-        let cmd = format!("echo INIT | {} {} init", db.to_string_lossy(), es);
-        match ops.run("sh", &["-c", &cmd]) {
+        // `initnoprompt` skips the confirmation prompt.
+        match ops.run(&db.to_string_lossy(), &[es, "initnoprompt"]) {
             Ok(()) => log.push(LogLine::new(Level::Info, "Initialized the database".into())),
             Err(e) => log.push(LogLine::new(Level::Warn, format!("db init: {e}"))),
         }
@@ -118,7 +117,7 @@ pub fn system_actions(
         log.push(LogLine::new(
             Level::Info,
             format!(
-                "  Initialize the DB once:  {} {es} init",
+                "  Initialize the DB once:  {} {es} initnoprompt",
                 db.to_string_lossy()
             ),
         ));
