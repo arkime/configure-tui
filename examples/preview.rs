@@ -114,6 +114,13 @@ fn main() {
     app.step = WizardStep::Plugins;
     println!("=== Plugins screen ===\n{}", render(&app));
 
+    // Viewer plugins screen.
+    app.components.viewer = true;
+    app.viewer_plugin_checked = vec![true];
+    app.cursor = 0;
+    app.step = WizardStep::ViewerPlugins;
+    println!("=== Viewer plugins screen ===\n{}", render(&app));
+
     // WISE URL screen (wise.so enabled, no wise component).
     app.components.wise = false;
     app.step = WizardStep::WiseUrl;

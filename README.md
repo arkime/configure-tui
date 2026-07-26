@@ -28,7 +28,8 @@ dependencies, so it can be produced once and pulled into the rpm/deb packages.
    opt into a single-node Elasticsearch we configure — you pick the host data
    dir, which becomes a compose volume, and heap is auto-sized so there's no
    memory question), **Encryption password**, **Plugins** (capture only; checkbox list,
-   auto-enables `wise.so` when the wise component is on), **WISE URL** (only when
+   auto-enables `wise.so` when the wise component is on), **Viewer plugins**
+   (viewer only; checkbox list incl. `wise.js`), **WISE URL** (only when
    `wise.so` is enabled without deploying the wise component — points capture at
    an external WISE), **GeoIP** (native + capture), **Docker mounts** (docker
    only; suggested host bind mounts, toggleable).

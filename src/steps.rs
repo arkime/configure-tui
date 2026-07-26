@@ -26,6 +26,8 @@ pub enum WizardStep {
     S2sPassword,
     /// Viewer upload toggle (viewer only).
     ViewerUploads,
+    /// Viewer plugin selection (viewer only).
+    ViewerPlugins,
     /// Capture plugin selection (capture only).
     Plugins,
     /// External WISE URL (only when wise.so is enabled without the wise
@@ -74,9 +76,10 @@ pub fn required_steps(
     if components.needs_s2s_password() {
         steps.push(WizardStep::S2sPassword);
     }
-    // Viewer-only: offer PCAP uploads.
+    // Viewer-only: offer PCAP uploads and viewer plugins.
     if components.viewer {
         steps.push(WizardStep::ViewerUploads);
+        steps.push(WizardStep::ViewerPlugins);
     }
     // Plugins are loaded by capture, in both deployments.
     if components.capture {
@@ -175,6 +178,7 @@ mod tests {
                 WizardStep::Elasticsearch,
                 WizardStep::S2sPassword,
                 WizardStep::ViewerUploads,
+                WizardStep::ViewerPlugins,
                 WizardStep::Plugins,
                 WizardStep::GeoIp,
                 WizardStep::Review,

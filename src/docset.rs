@@ -120,6 +120,9 @@ pub fn render_ini(
             if !answers.plugins.is_empty() {
                 t = set_ini_key(&t, "plugins", &answers.plugins);
             }
+            if !answers.viewer_plugins.is_empty() {
+                t = set_ini_key(&t, "viewerPlugins", &answers.viewer_plugins);
+            }
             if !answers.wise_url.is_empty() {
                 t = set_ini_key(&t, "wiseURL", &answers.wise_url);
             }
@@ -157,6 +160,9 @@ pub fn parse_ini(kind: DocKind, text: &str, answers: &mut Answers) {
         if let Some(v) = get_ini_key(text, "plugins") {
             answers.plugins = v;
         }
+        if let Some(v) = get_ini_key(text, "viewerPlugins") {
+            answers.viewer_plugins = v;
+        }
         if let Some(v) = get_ini_key(text, "wiseURL") {
             answers.wise_url = v;
         }
@@ -183,13 +189,16 @@ pub fn parse_ini(kind: DocKind, text: &str, answers: &mut Answers) {
 /// A getter that produces an env var's value from the answers (or None to omit).
 type EnvGetter = fn(&Answers, BasicAuthEncoding) -> Option<String>;
 
-fn env_pairs() -> [(&'static str, EnvGetter); 8] {
+fn env_pairs() -> [(&'static str, EnvGetter); 9] {
     [
         // Always drop privileges to `nobody` in the containers.
         ("ARKIME__dropUser", |_, _| Some("nobody".to_string())),
         ("ARKIME__uploadCommand", |a, _| {
             a.enable_uploads
                 .then(|| Answers::UPLOAD_COMMAND.to_string())
+        }),
+        ("ARKIME__viewerPlugins", |a, _| {
+            (!a.viewer_plugins.is_empty()).then(|| a.viewer_plugins.clone())
         }),
         ("ARKIME__interface", |a, _| {
             (!a.interfaces.is_empty()).then(|| a.interfaces.clone())
@@ -240,6 +249,9 @@ pub fn parse_env(text: &str, answers: &mut Answers) {
     }
     if let Some(v) = get_env_key(text, "ARKIME__plugins") {
         answers.plugins = v;
+    }
+    if let Some(v) = get_env_key(text, "ARKIME__viewerPlugins") {
+        answers.viewer_plugins = v;
     }
     if let Some(v) = get_env_key(text, "ARKIME__wiseURL") {
         answers.wise_url = v;
@@ -668,6 +680,28 @@ mod tests {
 
         a.enable_uploads = false;
         assert!(!render_env("", &a, BasicAuthEncoding::Plaintext).contains("uploadCommand"));
+    }
+
+    #[test]
+    fn viewer_plugins_written_and_round_trip() {
+        let mut a = answers();
+        a.viewer_plugins = "wise.js".into();
+        let env = render_env("", &a, BasicAuthEncoding::Plaintext);
+        assert!(env.contains("ARKIME__viewerPlugins=wise.js"));
+        let ini = render_ini(
+            DocKind::ConfigIni,
+            "passwordSecret=x\n",
+            &a,
+            BasicAuthEncoding::Plaintext,
+        );
+        assert!(ini.contains("viewerPlugins=wise.js"));
+
+        let mut from_ini = Answers::default();
+        parse_ini(DocKind::ConfigIni, &ini, &mut from_ini);
+        assert_eq!(from_ini.viewer_plugins, "wise.js");
+        let mut from_env = Answers::default();
+        parse_env(&env, &mut from_env);
+        assert_eq!(from_env.viewer_plugins, "wise.js");
     }
 
     #[test]

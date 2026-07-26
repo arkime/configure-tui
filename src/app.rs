@@ -31,6 +31,7 @@ pub struct Fields {
     pub es_password: Input,
     pub s2s: Input,
     pub plugins: Input,
+    pub viewer_plugins: Input,
     pub wise_url: Input,
     pub es_data: Input,
     pub load_path: Input,
@@ -84,6 +85,11 @@ pub struct App {
     pub plugin_checked: Vec<bool>,
     /// When true, the Plugins screen shows a free-text field.
     pub plugin_advanced: bool,
+
+    /// Per-viewer-plugin checkbox state, parallel to `KNOWN_VIEWER_PLUGINS`.
+    pub viewer_plugin_checked: Vec<bool>,
+    /// When true, the ViewerPlugins screen shows a free-text field.
+    pub viewer_plugin_advanced: bool,
 
     /// Suggested docker bind-mount toggles.
     pub docker_mounts: MountSelection,
@@ -157,6 +163,8 @@ impl App {
             interface_advanced,
             plugin_checked: vec![false; plugins::KNOWN_PLUGINS.len()],
             plugin_advanced: false,
+            viewer_plugin_checked: vec![false; plugins::KNOWN_VIEWER_PLUGINS.len()],
+            viewer_plugin_advanced: false,
             docker_mounts: MountSelection::default(),
             service_prefix: docset::DEFAULT_PREFIX.to_string(),
             detected_prefixes: Vec::new(),
@@ -261,6 +269,7 @@ impl App {
                     }
                 }
             }
+            WizardStep::ViewerPlugins => self.cursor = 0,
             WizardStep::DockerMounts => self.cursor = 0,
             _ => {}
         }
@@ -342,6 +351,7 @@ impl App {
             WizardStep::Elasticsearch => self.key_elasticsearch(key),
             WizardStep::S2sPassword => self.key_s2s(key),
             WizardStep::ViewerUploads => self.key_viewer_uploads(key),
+            WizardStep::ViewerPlugins => self.key_viewer_plugins(key),
             WizardStep::Plugins => self.key_plugins(key),
             WizardStep::WiseUrl => self.key_wise_url(key),
             WizardStep::DockerMounts => self.key_docker_mounts(key),
@@ -362,6 +372,7 @@ impl App {
             | WizardStep::DockerMounts => true,
             WizardStep::Interfaces => self.interface_advanced,
             WizardStep::Plugins => self.plugin_advanced,
+            WizardStep::ViewerPlugins => self.viewer_plugin_advanced,
             WizardStep::PrefixSelect => self.prefix_adding,
             _ => false,
         }
@@ -658,6 +669,54 @@ impl App {
         };
         // finalize() forces wise.so on when the wise component is enabled.
         self.answers.plugins = plugins::finalize(&raw, self.components.wise);
+        self.advance();
+    }
+
+    /// Viewer plugins screen: checkbox list of known viewer plugins, or advanced
+    /// free-text.
+    fn key_viewer_plugins(&mut self, key: KeyEvent) {
+        if self.viewer_plugin_advanced {
+            match key.code {
+                KeyCode::Enter => self.commit_viewer_plugins(),
+                KeyCode::Tab => self.viewer_plugin_advanced = false,
+                _ => {
+                    self.fields.viewer_plugins.handle_event(&Event::Key(key));
+                }
+            }
+            return;
+        }
+        let n = plugins::KNOWN_VIEWER_PLUGINS.len();
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => self.cursor = (self.cursor + n - 1) % n,
+            KeyCode::Down | KeyCode::Char('j') => self.cursor = (self.cursor + 1) % n,
+            KeyCode::Char(' ') => {
+                self.viewer_plugin_checked[self.cursor] = !self.viewer_plugin_checked[self.cursor];
+            }
+            KeyCode::Char('a') | KeyCode::Tab => {
+                self.fields.viewer_plugins = Input::new(self.checked_viewer_plugins().join(";"));
+                self.viewer_plugin_advanced = true;
+            }
+            KeyCode::Enter => self.commit_viewer_plugins(),
+            _ => {}
+        }
+    }
+
+    fn checked_viewer_plugins(&self) -> Vec<String> {
+        plugins::KNOWN_VIEWER_PLUGINS
+            .iter()
+            .zip(&self.viewer_plugin_checked)
+            .filter(|(_, &checked)| checked)
+            .map(|(name, _)| name.to_string())
+            .collect()
+    }
+
+    fn commit_viewer_plugins(&mut self) {
+        let raw = if self.viewer_plugin_advanced {
+            self.fields.viewer_plugins.value().to_string()
+        } else {
+            self.checked_viewer_plugins().join(";")
+        };
+        self.answers.viewer_plugins = plugins::finalize(&raw, false);
         self.advance();
     }
 
@@ -983,6 +1042,7 @@ impl App {
         self.fields.es_password = Input::new(self.answers.es_password.clone());
         self.fields.s2s = Input::new(self.answers.s2s_password.clone());
         self.fields.plugins = Input::new(self.answers.plugins.clone());
+        self.fields.viewer_plugins = Input::new(self.answers.viewer_plugins.clone());
         if !self.answers.es_data_dir.is_empty() {
             self.fields.es_data = Input::new(self.answers.es_data_dir.clone());
         }
@@ -1016,6 +1076,24 @@ impl App {
                 .any(|p| !p.is_empty() && !plugins::KNOWN_PLUGINS.contains(p))
         {
             self.plugin_advanced = true;
+        }
+
+        // Viewer plugin checkboxes similarly.
+        let vplugs: Vec<&str> = self
+            .answers
+            .viewer_plugins
+            .split(';')
+            .map(str::trim)
+            .collect();
+        for (i, name) in plugins::KNOWN_VIEWER_PLUGINS.iter().enumerate() {
+            self.viewer_plugin_checked[i] = vplugs.contains(name);
+        }
+        if !self.answers.viewer_plugins.is_empty()
+            && vplugs
+                .iter()
+                .any(|p| !p.is_empty() && !plugins::KNOWN_VIEWER_PLUGINS.contains(p))
+        {
+            self.viewer_plugin_advanced = true;
         }
     }
 
@@ -1055,6 +1133,14 @@ impl App {
                     self.checked_plugins().join(";")
                 };
                 self.answers.plugins = plugins::finalize(&raw, self.components.wise);
+            }
+            WizardStep::ViewerPlugins => {
+                let raw = if self.viewer_plugin_advanced {
+                    self.fields.viewer_plugins.value().to_string()
+                } else {
+                    self.checked_viewer_plugins().join(";")
+                };
+                self.answers.viewer_plugins = plugins::finalize(&raw, false);
             }
             WizardStep::WiseUrl => {
                 self.answers.wise_url = self.fields.wise_url.value().trim().to_string();
@@ -1310,6 +1396,12 @@ mod tests {
         press(&mut a, KeyCode::Char(' '));
         press(&mut a, KeyCode::Enter);
         assert!(a.answers.enable_uploads);
+        assert_eq!(a.step, WizardStep::ViewerPlugins);
+
+        // Viewer plugins: check wise.js (index 0), then proceed.
+        press(&mut a, KeyCode::Char(' '));
+        press(&mut a, KeyCode::Enter);
+        assert_eq!(a.answers.viewer_plugins, "wise.js");
         assert_eq!(a.step, WizardStep::Plugins);
 
         // Plugins: leave none selected, proceed.

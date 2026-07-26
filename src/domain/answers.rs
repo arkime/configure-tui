@@ -27,6 +27,8 @@ pub struct Answers {
     /// `;`-separated capture plugin list (already finalized, incl. wise.so when
     /// the wise component is enabled). Empty means none.
     pub plugins: String,
+    /// `;`-separated viewer plugin list (`viewerPlugins=`, e.g. `wise.js`).
+    pub viewer_plugins: String,
     /// External WISE service URL, set only when the wise.so plugin is enabled
     /// without deploying the wise component locally. Empty means unset.
     pub wise_url: String,

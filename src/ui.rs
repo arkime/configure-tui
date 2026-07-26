@@ -68,6 +68,7 @@ fn step_title(step: WizardStep) -> &'static str {
         WizardStep::Elasticsearch => "OpenSearch / Elasticsearch",
         WizardStep::S2sPassword => "Encryption password",
         WizardStep::ViewerUploads => "Viewer uploads",
+        WizardStep::ViewerPlugins => "Viewer plugins",
         WizardStep::Plugins => "Capture plugins",
         WizardStep::WiseUrl => "WISE URL",
         WizardStep::DockerMounts => "Docker mounts",
@@ -91,6 +92,7 @@ fn render_body(app: &App, f: &mut Frame, area: Rect) {
         WizardStep::Elasticsearch => render_elasticsearch(app, f, inner),
         WizardStep::S2sPassword => render_s2s(app, f, inner),
         WizardStep::ViewerUploads => render_viewer_uploads(app, f, inner),
+        WizardStep::ViewerPlugins => render_viewer_plugins(app, f, inner),
         WizardStep::Plugins => render_plugins(app, f, inner),
         WizardStep::WiseUrl => render_wise_url(app, f, inner),
         WizardStep::DockerMounts => render_docker_mounts(app, f, inner),
@@ -375,6 +377,41 @@ fn render_plugins(app: &App, f: &mut Frame, area: Rect) {
     f.render_widget(Paragraph::new(lines), area);
 }
 
+fn render_viewer_plugins(app: &App, f: &mut Frame, area: Rect) {
+    if app.viewer_plugin_advanced {
+        let lines = vec![
+            Line::from("Viewer plugins to load, ';'-separated."),
+            Line::from(Span::styled(
+                "Advanced mode — Tab returns to the checkbox list.",
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(""),
+            field_line("viewerPlugins", app.fields.viewer_plugins.value(), true),
+        ];
+        f.render_widget(Paragraph::new(lines), area);
+        return;
+    }
+
+    let mut lines = vec![
+        Line::from("Select viewer plugins to load (space to toggle)."),
+        Line::from(""),
+    ];
+    for (i, name) in plugins::KNOWN_VIEWER_PLUGINS.iter().enumerate() {
+        let checked = if app.viewer_plugin_checked[i] {
+            "[x]"
+        } else {
+            "[ ]"
+        };
+        lines.push(selectable(&format!("{checked} {name}"), i == app.cursor));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Press 'a' to type a custom viewer-plugin list.",
+        Style::default().fg(Color::DarkGray),
+    )));
+    f.render_widget(Paragraph::new(lines), area);
+}
+
 fn render_wise_url(app: &App, f: &mut Frame, area: Rect) {
     let lines = vec![
         Line::from("wise.so is enabled but the wise component isn't deployed here."),
@@ -527,6 +564,12 @@ fn render_review(app: &App, f: &mut Frame, area: Rect) {
                 "no"
             },
         ));
+        let vp = if app.answers.viewer_plugins.is_empty() {
+            "(none)"
+        } else {
+            &app.answers.viewer_plugins
+        };
+        lines.push(kv("Viewer plugins", vp));
     }
     if app.components.capture {
         let plugins = if app.answers.plugins.is_empty() {
@@ -646,6 +689,13 @@ fn render_footer(app: &App, f: &mut Frame, area: Rect) {
         WizardStep::S2sPassword => "type · Enter next · Esc back",
         WizardStep::Plugins => {
             if app.plugin_advanced {
+                "type · Tab checkboxes · Enter next · Esc back"
+            } else {
+                "↑↓ move · space toggle · a custom · →/Enter next · ←/Esc back"
+            }
+        }
+        WizardStep::ViewerPlugins => {
+            if app.viewer_plugin_advanced {
                 "type · Tab checkboxes · Enter next · Esc back"
             } else {
                 "↑↓ move · space toggle · a custom · →/Enter next · ←/Esc back"
