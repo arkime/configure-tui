@@ -2,15 +2,15 @@
 //! so the output can be eyeballed on any platform (the real binary refuses to
 //! run on macOS). `cargo run --example preview`.
 
-use arkime_setup::app::App;
-use arkime_setup::config::substitute::BasicAuthEncoding;
-use arkime_setup::docset::{render_compose, render_env, Images};
-use arkime_setup::domain::{
+use configure_tui::app::App;
+use configure_tui::config::substitute::BasicAuthEncoding;
+use configure_tui::docset::{render_compose, render_env, Images};
+use configure_tui::domain::{
     Answers, BuildConfig, Components, Deployment, EsBackend, MountSelection, Os, Platform,
     ServiceManagerKind,
 };
-use arkime_setup::steps::WizardStep;
-use arkime_setup::ui;
+use configure_tui::steps::WizardStep;
+use configure_tui::ui;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 
@@ -98,7 +98,7 @@ fn main() {
     };
     let compose = render_compose(
         "",
-        arkime_setup::docset::DEFAULT_PREFIX,
+        configure_tui::docset::DEFAULT_PREFIX,
         &components,
         &answers,
         &MountSelection::default(),

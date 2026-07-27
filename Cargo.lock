@@ -15,22 +15,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
-name = "arkime-setup"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "crossterm",
- "nix",
- "ratatui",
- "serde",
- "serde_yml",
- "similar",
- "tempfile",
- "tui-input",
- "tui-textarea",
-]
-
-[[package]]
 name = "bitflags"
 version = "2.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -75,6 +59,22 @@ dependencies = [
  "rustversion",
  "ryu",
  "static_assertions",
+]
+
+[[package]]
+name = "configure-tui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossterm",
+ "nix",
+ "ratatui",
+ "serde",
+ "serde_yml",
+ "similar",
+ "tempfile",
+ "tui-input",
+ "tui-textarea",
 ]
 
 [[package]]

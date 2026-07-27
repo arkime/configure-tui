@@ -1,9 +1,9 @@
 //! View-layer tests driving the real render path through ratatui's TestBackend.
 
-use arkime_setup::app::App;
-use arkime_setup::domain::{BuildConfig, Deployment, Os, Platform, ServiceManagerKind};
-use arkime_setup::steps::WizardStep;
-use arkime_setup::ui;
+use configure_tui::app::App;
+use configure_tui::domain::{BuildConfig, Deployment, Os, Platform, ServiceManagerKind};
+use configure_tui::steps::WizardStep;
+use configure_tui::ui;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 use tui_input::Input;

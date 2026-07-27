@@ -2,9 +2,9 @@
 //! terminal (with a panic hook that restores it), and run the wizard.
 
 use anyhow::Result;
-use arkime_setup::app::{self, App};
-use arkime_setup::domain::BuildConfig;
-use arkime_setup::guards::{self, GuardOutcome};
+use configure_tui::app::{self, App};
+use configure_tui::domain::BuildConfig;
+use configure_tui::guards::{self, GuardOutcome};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };

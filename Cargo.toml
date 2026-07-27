@@ -1,5 +1,5 @@
 [package]
-name = "arkime-setup"
+name = "configure-tui"
 version = "0.1.0"
 edition = "2021"
 description = "Interactive TUI to configure an Arkime installation (native or docker)"
