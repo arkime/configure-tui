@@ -30,7 +30,9 @@ dependencies, so it can be produced once and pulled into the rpm/deb packages.
    wizard prefills components and values from it.
 3. **Components** — multi-select toggles; later prompts are the union of what the
    selected components need.
-4. **Interfaces** (capture only; checkbox list of detected NICs + advanced
+4. **Arkime image** (docker only; pick the **stable** `v6-ja4-latest` or the
+   **snapshot** development image — loaded compose files auto-detect which),
+   **Interfaces** (capture only; checkbox list of detected NICs + advanced
    free-type), **OpenSearch/Elasticsearch** (URL/user/password; in docker you can
    opt into a single-node Elasticsearch we configure — you pick the host data
    dir, which becomes a compose volume, and heap is auto-sized so there's no

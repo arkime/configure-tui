@@ -27,7 +27,7 @@ pub struct Images {
 impl Default for Images {
     fn default() -> Self {
         Images {
-            arkime: "arkime/arkime:latest".into(),
+            arkime: crate::domain::ImageChannel::Stable.image().into(),
             opensearch: "opensearchproject/opensearch:3.7.0".into(),
             elasticsearch: "elasticsearch:8.19.19".into(),
         }
@@ -640,6 +640,10 @@ pub fn parse_compose(
         .or_else(|| services.get(Value::from(arkime_service_name(prefix, Component::Viewer))))
         .and_then(|v| v.as_mapping());
     if let Some(svc) = svc {
+        // Recover the image channel (stable vs snapshot) from the image tag.
+        if let Some(image) = svc.get(Value::from("image")).and_then(|v| v.as_str()) {
+            answers.image_channel = crate::domain::ImageChannel::from_image(image);
+        }
         let vols: Vec<String> = svc
             .get(Value::from("volumes"))
             .and_then(|v| v.as_sequence())

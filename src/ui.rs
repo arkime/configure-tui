@@ -64,6 +64,7 @@ fn step_title(step: WizardStep) -> &'static str {
         WizardStep::LoadPath => "Load file",
         WizardStep::PrefixSelect => "Service prefix",
         WizardStep::ComponentsSelect => "Components",
+        WizardStep::ImageSelect => "Arkime image",
         WizardStep::Interfaces => "Interfaces",
         WizardStep::Elasticsearch => "OpenSearch / Elasticsearch",
         WizardStep::S2sPassword => "Encryption password",
@@ -89,6 +90,7 @@ fn render_body(app: &App, f: &mut Frame, area: Rect) {
         WizardStep::LoadPath => render_load_path(app, f, inner),
         WizardStep::PrefixSelect => render_prefix_select(app, f, inner),
         WizardStep::ComponentsSelect => render_components(app, f, inner),
+        WizardStep::ImageSelect => render_image_select(app, f, inner),
         WizardStep::Interfaces => render_interfaces(app, f, inner),
         WizardStep::Elasticsearch => render_elasticsearch(app, f, inner),
         WizardStep::S2sPassword => render_s2s(app, f, inner),
@@ -128,6 +130,22 @@ fn render_start(app: &App, f: &mut Frame, area: Rect) {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "(native modes are unavailable on macOS — docker only)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    f.render_widget(Paragraph::new(lines), area);
+}
+
+fn render_image_select(app: &App, f: &mut Frame, area: Rect) {
+    use crate::domain::ImageChannel;
+    let mut lines = vec![
+        Line::from("Which Arkime container image should the services run?"),
+        Line::from(""),
+    ];
+    for (i, ch) in ImageChannel::ALL.iter().enumerate() {
+        lines.push(selectable(ch.label(), i == app.cursor));
+        lines.push(Line::from(Span::styled(
+            format!("    {}", ch.image()),
             Style::default().fg(Color::DarkGray),
         )));
     }
@@ -592,6 +610,9 @@ fn render_review(app: &App, f: &mut Frame, area: Rect) {
         ),
         kv("Components", &comps.join(", ")),
     ];
+    if app.deployment == Some(Deployment::Docker) && app.components.any() {
+        lines.push(kv("Arkime image", app.answers.image_channel.image()));
+    }
     if app.components.needs_interfaces() {
         lines.push(kv("Interfaces", &app.answers.interfaces));
     }
@@ -755,6 +776,7 @@ fn render_footer(app: &App, f: &mut Frame, area: Rect) {
             }
         }
         WizardStep::ComponentsSelect => "↑↓ move · space toggle · →/Enter next · ←/Esc back",
+        WizardStep::ImageSelect => "↑↓ choose · →/Enter next · ←/Esc back",
         WizardStep::Interfaces => {
             if app.interface_advanced {
                 "type · Tab checkboxes · Enter next · Esc back"
@@ -863,7 +885,9 @@ fn render_editor(app: &App, f: &mut Frame) {
             .map(|a| a.lines().join("\n"))
             .unwrap_or_default();
         f.render_widget(
-            Paragraph::new(diff_lines(original, &current)).wrap(Wrap { trim: false }),
+            Paragraph::new(diff_lines(original, &current))
+                .wrap(Wrap { trim: false })
+                .scroll((ed.diff_scroll, 0)),
             chunks[1],
         );
     } else if let Some(area_w) = ed.areas.get(ed.tab) {
@@ -871,7 +895,7 @@ fn render_editor(app: &App, f: &mut Frame) {
     }
 
     let hint = if ed.diff {
-        "Tab/Shift-Tab switch file · ^D back to edit · Esc/^E done"
+        "↑/↓ scroll · Tab/Shift-Tab switch file · ^D back to edit · Esc/^E done"
     } else {
         "Tab/Shift-Tab switch file · edit freely · ^D diff · Esc/^E done (syncs to wizard)"
     };

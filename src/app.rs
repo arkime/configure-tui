@@ -5,8 +5,8 @@ use crate::actions::system::RealOps;
 use crate::config::substitute::BasicAuthEncoding;
 use crate::docset::{self, DocKind, Document, Images};
 use crate::domain::{
-    plugins, Answers, BuildConfig, Component, Components, Deployment, MountSelection, Platform,
-    StartMode,
+    plugins, Answers, BuildConfig, Component, Components, Deployment, ImageChannel, MountSelection,
+    Platform, StartMode,
 };
 use crate::interfaces;
 use crate::log::LogLine;
@@ -49,6 +49,8 @@ pub struct Editor {
     /// When true the active tab shows a diff (original vs current) instead of
     /// the editable buffer.
     pub diff: bool,
+    /// Vertical scroll offset (in lines) for the read-only diff view.
+    pub diff_scroll: u16,
 }
 
 pub struct App {
@@ -276,6 +278,12 @@ impl App {
                     .unwrap_or(0);
             }
             WizardStep::ComponentsSelect => self.cursor = 0,
+            WizardStep::ImageSelect => {
+                self.cursor = ImageChannel::ALL
+                    .iter()
+                    .position(|&c| c == self.answers.image_channel)
+                    .unwrap_or(0);
+            }
             WizardStep::Interfaces => self.cursor = 0,
             WizardStep::Elasticsearch => self.es_focus = 0,
             WizardStep::Plugins => {
@@ -370,6 +378,7 @@ impl App {
             WizardStep::LoadPath => self.key_load_path(key),
             WizardStep::PrefixSelect => self.key_prefix_select(key),
             WizardStep::ComponentsSelect => self.key_components(key),
+            WizardStep::ImageSelect => self.key_image_select(key),
             WizardStep::Interfaces => self.key_interfaces(key),
             WizardStep::Elasticsearch => self.key_elasticsearch(key),
             WizardStep::S2sPassword => self.key_s2s(key),
@@ -866,6 +875,24 @@ impl App {
         self.answers.maxmind_key = self.fields.maxmind_key.value().trim().to_string();
     }
 
+    /// ImageSelect: pick the Arkime image channel (stable vs snapshot).
+    fn key_image_select(&mut self, key: KeyEvent) {
+        let n = ImageChannel::ALL.len();
+        match key.code {
+            KeyCode::Up => self.cursor = self.cursor.saturating_sub(1),
+            KeyCode::Down => self.cursor = (self.cursor + 1).min(n - 1),
+            KeyCode::Char(' ') => self.cursor = (self.cursor + 1) % n,
+            KeyCode::Enter => {
+                self.answers.image_channel = ImageChannel::ALL[self.cursor];
+                self.advance();
+                return;
+            }
+            _ => {}
+        }
+        // Keep the channel live so the review/docs reflect the highlighted row.
+        self.answers.image_channel = ImageChannel::ALL[self.cursor];
+    }
+
     fn key_viewer_uploads(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char(' ') => self.answers.enable_uploads = !self.answers.enable_uploads,
@@ -955,7 +982,10 @@ impl App {
         let mounts = self.docker_mounts.clone();
         let ba = self.basic_auth;
         let prefix = self.service_prefix.clone();
-        let images = Images::default();
+        let images = Images {
+            arkime: answers.image_channel.image().into(),
+            ..Images::default()
+        };
         for d in &mut self.docs {
             d.text = match d.kind {
                 DocKind::Compose => docset::render_compose(
@@ -1272,7 +1302,27 @@ impl App {
             tab: 0,
             areas,
             diff: false,
+            diff_scroll: 0,
         });
+    }
+
+    /// Number of rendered lines in the current tab's diff (for scroll clamping).
+    fn diff_line_count(&self, tab: usize) -> u16 {
+        let ed = self.editor.as_ref().unwrap();
+        let original = self
+            .docs
+            .get(tab)
+            .map(|d| d.original.as_str())
+            .unwrap_or("");
+        let current = ed
+            .areas
+            .get(tab)
+            .map(|a| a.lines().join("\n"))
+            .unwrap_or_default();
+        let n = similar::TextDiff::from_lines(original, &current)
+            .iter_all_changes()
+            .count();
+        u16::try_from(n).unwrap_or(u16::MAX)
     }
 
     fn editor_key(&mut self, key: KeyEvent) {
@@ -1284,11 +1334,36 @@ impl App {
         match key.code {
             KeyCode::Esc => self.close_editor(),
             _ if ctrl_e => self.close_editor(),
-            _ if ctrl_d => ed.diff = !ed.diff,
-            KeyCode::Tab => ed.tab = (ed.tab + 1) % n,
-            KeyCode::BackTab => ed.tab = (ed.tab + n - 1) % n,
-            // The diff view is read-only.
-            _ if ed.diff => {}
+            _ if ctrl_d => {
+                ed.diff = !ed.diff;
+                ed.diff_scroll = 0;
+            }
+            KeyCode::Tab => {
+                ed.tab = (ed.tab + 1) % n;
+                ed.diff_scroll = 0;
+            }
+            KeyCode::BackTab => {
+                ed.tab = (ed.tab + n - 1) % n;
+                ed.diff_scroll = 0;
+            }
+            // The diff view is read-only; arrows/page keys scroll it.
+            _ if ed.diff => {
+                let max = self.diff_line_count(self.editor.as_ref().unwrap().tab);
+                let ed = self.editor.as_mut().unwrap();
+                match key.code {
+                    KeyCode::Up => ed.diff_scroll = ed.diff_scroll.saturating_sub(1),
+                    KeyCode::Down => {
+                        ed.diff_scroll = (ed.diff_scroll + 1).min(max.saturating_sub(1))
+                    }
+                    KeyCode::PageUp => ed.diff_scroll = ed.diff_scroll.saturating_sub(10),
+                    KeyCode::PageDown => {
+                        ed.diff_scroll = (ed.diff_scroll + 10).min(max.saturating_sub(1))
+                    }
+                    KeyCode::Home => ed.diff_scroll = 0,
+                    KeyCode::End => ed.diff_scroll = max.saturating_sub(1),
+                    _ => {}
+                }
+            }
             _ => {
                 ed.areas[ed.tab].input(key);
             }
@@ -1669,6 +1744,9 @@ mod tests {
         press(&mut a, KeyCode::Char(' '));
         press(&mut a, KeyCode::Enter);
         assert!(a.components.wise);
+        // Docker always offers the image channel first.
+        assert_eq!(a.step, WizardStep::ImageSelect);
+        press(&mut a, KeyCode::Enter);
         // Wise needs no interfaces/ES/S2S/plugins, but docker still offers mounts.
         assert_eq!(a.step, WizardStep::DockerMounts);
         press(&mut a, KeyCode::Enter);

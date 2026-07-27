@@ -1,7 +1,7 @@
 //! Everything the wizard collects from the admin. Filled in step by step; read
 //! by the templating (native) and docker generators at Apply time.
 
-use crate::domain::EsBackend;
+use crate::domain::{EsBackend, ImageChannel};
 
 #[derive(Debug, Clone, Default)]
 pub struct Answers {
@@ -19,6 +19,8 @@ pub struct Answers {
     /// native mode a non-None value triggers a demo package install; in docker
     /// it adds the matching compose service.
     pub es_backend: EsBackend,
+    /// Which Arkime container image to run (docker mode): stable or snapshot.
+    pub image_channel: ImageChannel,
     /// Host data directory for the docker single-node backend (compose volume,
     /// not an env var). Only used when `es_backend` is set in docker mode.
     pub es_data_dir: String,

@@ -18,6 +18,8 @@ pub enum WizardStep {
     PrefixSelect,
     /// Multi-select toggles for capture/viewer/wise/parliament/cont3xt.
     ComponentsSelect,
+    /// Arkime image channel: stable vs snapshot (docker only).
+    ImageSelect,
     /// Interfaces to monitor (capture only).
     Interfaces,
     /// ES URL/user/password + demo-ES toggle.
@@ -69,6 +71,10 @@ pub fn required_steps(
     }
     steps.push(WizardStep::ComponentsSelect);
 
+    // Docker: pick which Arkime image (stable/snapshot) the services run.
+    if deployment == Some(Deployment::Docker) && components.any() {
+        steps.push(WizardStep::ImageSelect);
+    }
     if components.needs_interfaces() {
         steps.push(WizardStep::Interfaces);
     }
@@ -215,6 +221,15 @@ mod tests {
         assert!(steps.contains(&WizardStep::Interfaces));
         assert!(steps.contains(&WizardStep::DockerMounts));
         assert!(steps.contains(&WizardStep::Plugins));
+        assert!(steps.contains(&WizardStep::ImageSelect));
+    }
+
+    #[test]
+    fn image_select_is_docker_only() {
+        assert!(
+            !required_steps(Some(Deployment::Native), false, false, &caps(), false)
+                .contains(&WizardStep::ImageSelect)
+        );
     }
 
     #[test]
